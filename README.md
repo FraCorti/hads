@@ -62,4 +62,4 @@ as a function of MAC percentage in each REDS subnetwork.
 
 **(2) Models size L**
 
-<img src="result/plots/plotly_mobile_parameters_sizeL.png" width="270"/> <img src="result/plots/plotly_mobile_accuracy_sizeL.png" width="270"/> <img src="result/plots/plotly_mobile_inference_sizeL.png" width="300"/>
+<img src="result/plots/plotly_mobile_parameters_sizeL.png" width="270"/> <img src="result/plots/plotly_mobile_accuracy_sizeL.png" width="270"/> <img src="result/plots/plotly_mobile_inference_sizeL.png" width="270"/>
