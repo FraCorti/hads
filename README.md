@@ -2,7 +2,7 @@
 
 ## Software prerequisites
 
-Install the software packages required for reproducing the experiment by running the
+Install the software packages required for reproducing the experiments by running the
 command: `pip3 install -r requirements.txt` inside the project folder.
 
 Run the `setup.sh` script file to create the hierarchy of folders used to store the results of the experiments.
