@@ -9,8 +9,7 @@ Run the `setup.sh` script file to create the hierarchy of folders used to store 
 
 [Install](https://support.gurobi.com/hc/en-us/articles/360044290292-How-do-I-install-Gurobi-for-Python-)
 the [GUROBI](https://www.gurobi.com/) solver and obtain
-a license (
-see [free academic license](https://support.gurobi.com/hc/en-us/articles/360040541251-How-do-I-obtain-a-free-academic-license-)).
+a license (see [free academic license](https://support.gurobi.com/hc/en-us/articles/360040541251-How-do-I-obtain-a-free-academic-license-)).
 To link the license and the solver to the programs you have to pass the arguments: **--gurobi_home** and
 **--gurobi_license_file** to each program. The former points to the absolute path of the installation of Gurobi and the
 latter to its license.
