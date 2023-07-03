@@ -8,7 +8,6 @@ import numpy as np
 from utils.batch_normalization import Reds_BatchNormalizationBase
 from utils.linear import Linear, Linear_Adaptive
 from utils.logs import log_print
-from utils.tinyML_benchmark import print_intermediate_activations
 
 
 def get_reds_cnn_architecture(architecture_name, model_size_info_convolution, model_settings, model_size_info_dense,

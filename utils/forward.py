@@ -1,12 +1,10 @@
 import numpy as np
 import tensorflow as tf
 
-from utils.convolution import get_reds_cnn_architecture, Reds_2DConvolution_Standard, Linear_Adaptive
+from utils.convolution import get_reds_cnn_architecture, Linear_Adaptive
 from utils.ds_convolution import get_reds_ds_cnn_architecture
-from utils.data import get_custom_dataset, get_dataset_tf, store_subnetworks_training_accuracies
 from utils.linear import get_reds_dnn_architecture, Reds_Linear
 from utils.logs import log_print
-from utils.preprocessing import data_normalization_padding_mnist
 
 
 def cross_entropy_loss(y_pred, y):

@@ -2,7 +2,7 @@
 
 ## Software prerequisites
 
-Install the software packages required for reproducing the experiments by running the
+Install the software packages required for reproducing the experiment by running the
 command: `pip3 install -r requirements.txt` inside the project folder.
 
 Run the `setup.sh` script file to create the hierarchy of folders used to store the results of the experiments.
@@ -58,8 +58,8 @@ as a function of MAC percentage in each REDS subnetwork.
 
 **(1) Models size S**
 
-<img src="result/plots/plotly_mobile_parameters_sizeS.png" width="250"/> <img src="result/plots/plotly_mobile_accuracy_sizeS.png" width="250"/> <img src="result/plots/plotly_mobile_inference_sizeS.png" width="250"/> 
+<img src="result/plots/plotly_mobile_parameters_sizeS.png" width="310"/> <img src="result/plots/plotly_mobile_accuracy_sizeS.png" width="300"/> <img src="result/plots/plotly_mobile_inference_sizeS.png" width="300"/> 
 
 **(2) Models size L**
 
-<img src="result/plots/plotly_mobile_parameters_sizeL.png" width="250"/> <img src="result/plots/plotly_mobile_accuracy_sizeL.png" width="250"/> <img src="result/plots/plotly_mobile_inference_sizeL.png" width="250"/>
+<img src="result/plots/plotly_mobile_parameters_sizeL.png" width="310"/> <img src="result/plots/plotly_mobile_accuracy_sizeL.png" width="300"/> <img src="result/plots/plotly_mobile_inference_sizeL.png" width="300"/>
