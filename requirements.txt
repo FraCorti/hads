@@ -1,0 +1,11 @@
+keras==2.9.0
+librosa==0.10.0.post2
+matplotlib==3.5.1
+modes==1.0.6
+numpy==1.21.5
+ortools==9.6.2534
+pandas==1.5.0
+scikit_learn==1.2.2
+tensorflow==2.11.0
+tensorflow_datasets==4.9.2
+tensorflow_io==0.32.0
