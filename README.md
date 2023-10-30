@@ -30,7 +30,7 @@ to the `--last_pointwise_filters`
 argument.
 
 All the individual subnetwork architectures can be trained in isolation by running the `_full_training.py` files. 
-
+ 
 **Train DNN models**
 
 ```
@@ -48,6 +48,8 @@ python kws_convolution_cnn.py --gurobi_license_file path/to/license/gurobi.lic -
 ```
 python kws_ds_convolution.py --gurobi_license_file path/to/license/gurobi.lic --gurobi_home path/to/installation//gurobi/gurobi1002/linux64 
 ```
+
+To train the REDS DS-CNN S models on *CIFAR10* or *Fashion-MNIST* run for the former the *vision_ds_convolution_fashion_mnist.py* file and for the latter *vision_ds_convolution_cifar10.py* file. The pre-trained models are stored in the models folder.
 
 
 ## Analysis results on Pixel 6 and Xiaomi Redmi Note 9 Pro 
