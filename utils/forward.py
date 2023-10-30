@@ -1,8 +1,12 @@
+import logging
+import time
+
 import numpy as np
 import tensorflow as tf
 
 from utils.convolution import get_reds_cnn_architecture, Linear_Adaptive
 from utils.ds_convolution import get_reds_ds_cnn_architecture
+from utils.ds_convolution_vision_data import get_reds_ds_cnn_vision_architectures
 from utils.linear import get_reds_dnn_architecture, Reds_Linear
 from utils.logs import log_print
 
@@ -22,11 +26,30 @@ def accuracy_converted(y_pred, y):
     return tf.reduce_mean(tf.cast(is_equal, tf.float32))
 
 
+def accuracy_vision(y_pred, y):
+    # Compute accuracy after extracting class predictions
+    class_preds = tf.argmax(tf.nn.softmax(y_pred), axis=1)
+
+    is_equal = tf.equal(y, class_preds)
+    return tf.reduce_mean(tf.cast(is_equal, tf.float32))
+
+
 def accuracy(y_pred, y):
     # Compute accuracy after extracting class predictions
     class_preds = tf.argmax(tf.nn.softmax(y_pred), axis=1)
 
-    if class_preds.dtype == tf.int64:
+    if class_preds.dtype == tf.int64:  # and y.dtype == tf.int32
+        class_preds = tf.cast(x=class_preds, dtype=tf.int32)
+
+    is_equal = tf.equal(y, class_preds)
+    return tf.reduce_mean(tf.cast(is_equal, tf.float32))
+
+
+def accuracy_vision_cifar10(y_pred, y):
+    # Compute accuracy after extracting class predictions
+    class_preds = tf.argmax(tf.nn.softmax(y_pred), axis=1)
+
+    if class_preds.dtype == tf.int64 and y.dtype == tf.int32:
         class_preds = tf.cast(x=class_preds, dtype=tf.int32)
 
     is_equal = tf.equal(y, class_preds)
@@ -160,6 +183,54 @@ def train_step_reds(x_batch, y_batch, loss, acc, model, optimizer, subnetworks_n
 
     return batch_losses, batch_accuracies
 
+def val_step_reds_vision(x_batch, y_batch, loss_fn, acc, model, subnetworks_losses):
+    logits = model(inputs=x_batch, training=False)
+
+    for subnet_output_index in range(len(logits)):
+        batch_loss = loss_fn(y_batch, logits[subnet_output_index])
+        acc[subnet_output_index](y_batch, logits[subnet_output_index])
+        subnetworks_losses[subnet_output_index](batch_loss)
+
+def train_step_reds_vision(x_batch, y_batch, loss_fn, acc, model, optimizer, subnetworks_losses, subnetworks_number, square_error_scaling=False):
+    alphas = list(0 for _ in range(0, subnetworks_number))
+
+    # scale loss proportional to subnetwork parameters percentage
+    for subnetwork_index in range(0, subnetworks_number):
+        subnetworks_parameter_percentage_used = model.get_subnetwork_parameters_percentage(
+            subnetwork_index=subnetwork_index)
+
+        alpha = pow((1 - (1 - (subnetworks_parameter_percentage_used))), 0.5)
+        alphas[subnetwork_index] = alpha
+
+    gradients_accumulation = []
+    first_gradients = True
+
+    # compute and accumulate subnetworks gradients
+    with tf.GradientTape(persistent=True) as tape:
+
+        logits = model(inputs=x_batch, training=True)
+
+        for subnet_output_index in range(len(logits)):
+            batch_loss = loss_fn(y_batch, logits[subnet_output_index])
+
+            acc[subnet_output_index](y_batch, logits[subnet_output_index])
+            subnetworks_losses[subnet_output_index](batch_loss)
+
+            # scale loss and compute subnetwork gradient
+            subnetwork_gradients = tape.gradient(batch_loss * float(
+                alphas[subnet_output_index] / np.array(alphas).sum()), model.trainable_variables)  # scaling the loss absolute value with pow
+
+            if first_gradients:
+                [gradients_accumulation.append(gradient) for gradient in subnetwork_gradients]
+                first_gradients = False
+            else:
+                for gradient_index in range(len(gradients_accumulation)):
+                    gradients_accumulation[gradient_index] = tf.math.add(gradients_accumulation[gradient_index],
+                                                                         subnetwork_gradients[gradient_index])
+
+    for layer_index, (grad, var) in enumerate(zip(gradients_accumulation, model.trainable_variables)):
+        optimizer.update_step(grad, var)
+
 
 def train_model_no_val(model, train_data, loss, acc, optimizer, epochs, subnetworks_number, debug=False):
     train_losses, train_accs = [], []
@@ -262,7 +333,6 @@ def train_model(model, train_data, val_data, test_data, loss, acc, optimizer, ep
                 subnetworks_number, subnetworks_macs, args, message_initial_accuracies, message="", full_training=False,
                 importance_score=True, architecture_name="", plot=True, batch_norm_finetuning=False,
                 debug=False):
-
     val_acc_subnetworks = [[] for _ in range(subnetworks_number)]
     train_acc_subnetworks = [[] for _ in range(subnetworks_number)]
     test_acc_subnetworks = [[] for _ in range(subnetworks_number)]
@@ -278,32 +348,41 @@ def train_model(model, train_data, val_data, test_data, loss, acc, optimizer, ep
 
         batch_losses_test, batch_accs_test = [[] for _ in range(subnetworks_number)], [[] for _ in
                                                                                        range(subnetworks_number)]
-        for x_batch, y_batch in train_data:
+        try:
+            for x_batch, y_batch in train_data:
+                # y_batch = tf.cast(y_batch, dtype=tf.int64)
+                # Compute gradients and update the model's parameters
+                batch_loss_train, batch_accuracy_train = train_step_reds(x_batch, y_batch, loss, acc,
+                                                                         model, optimizer,
+                                                                         subnetworks_number)
 
-            # Compute gradients and update the model's parameters
-            batch_loss_train, batch_accuracy_train = train_step_reds(x_batch, y_batch, loss, acc,
-                                                                     model, optimizer,
-                                                                     subnetworks_number)
+                for subnetwork_number in range(len(batch_loss_train)):
+                    batch_losses_train[subnetwork_number].append(batch_loss_train[subnetwork_number])
+                    batch_accs_train[subnetwork_number].append(batch_accuracy_train[subnetwork_number])
+        except Exception as e:
+            print(e)
 
-            for subnetwork_number in range(len(batch_loss_train)):
-                batch_losses_train[subnetwork_number].append(batch_loss_train[subnetwork_number])
-                batch_accs_train[subnetwork_number].append(batch_accuracy_train[subnetwork_number])
+        try:
+            for x_batch, y_batch in val_data:
+                # y_batch = tf.cast(y_batch, dtype=tf.int64)
+                batch_loss_val, batch_accuracy_val = val_step_reds(x_batch, y_batch, loss, acc, model)
 
-        for x_batch, y_batch in val_data:
+                for subnetwork_number in range(len(batch_loss_val)):
+                    batch_losses_val[subnetwork_number].append(batch_loss_val[subnetwork_number])
+                    batch_accs_val[subnetwork_number].append(batch_accuracy_val[subnetwork_number])
+        except Exception as e:
+            print(e)
 
-            batch_loss_val, batch_accuracy_val = val_step_reds(x_batch, y_batch, loss, acc, model)
+        try:
+            for x_batch, y_batch in test_data:
+                # y_batch = tf.cast(y_batch, dtype=tf.int64)
+                batch_loss_test, batch_accuracy_test = val_step_reds(x_batch, y_batch, loss, acc, model)
 
-            for subnetwork_number in range(len(batch_loss_val)):
-                batch_losses_val[subnetwork_number].append(batch_loss_val[subnetwork_number])
-                batch_accs_val[subnetwork_number].append(batch_accuracy_val[subnetwork_number])
-
-        for x_batch, y_batch in test_data:
-
-            batch_loss_test, batch_accuracy_test = val_step_reds(x_batch, y_batch, loss, acc, model)
-
-            for subnetwork_number in range(len(batch_loss_test)):
-                batch_losses_test[subnetwork_number].append(batch_loss_test[subnetwork_number])
-                batch_accs_test[subnetwork_number].append(batch_accuracy_test[subnetwork_number])
+                for subnetwork_number in range(len(batch_loss_test)):
+                    batch_losses_test[subnetwork_number].append(batch_loss_test[subnetwork_number])
+                    batch_accs_test[subnetwork_number].append(batch_accuracy_test[subnetwork_number])
+        except Exception as e:
+            print(e)
 
         for subnetwork_number in range(subnetworks_number):
             train_loss, train_acc = tf.reduce_mean(batch_losses_train[subnetwork_number]), tf.reduce_mean(
@@ -322,25 +401,60 @@ def train_model(model, train_data, val_data, test_data, loss, acc, optimizer, ep
             log_print(
                 f"subnetworks MACS: {subnetworks_macs[subnetwork_number]} training accuracy: {100 * train_acc:.3f}% validation accuracy: {100 * val_acc:.3f}% test accuracy: {100 * test_acc:.3f}% training loss: {train_loss:.3f} validation loss: {val_loss:.3f} test loss: {test_loss:.3f}")
 
-        if plot and epoch == epochs - 1:
-
-            if full_training:
-                store_subnetworks_training_accuracies(test_acc_subnetworks=test_acc_subnetworks,
-                                                      importance_score=importance_score,
-                                                      batch_norm_finetuning=batch_norm_finetuning,
-                                                      save_path='{}/result/plots/{}_full_training_{}_{}_{}_{}',
-                                                      train_acc_subnetworks=train_acc_subnetworks, args=args,
-                                                      subnetworks_macs=subnetworks_macs,
-                                                      architecture_name=architecture_name)
-            else:
-                store_subnetworks_training_accuracies(test_acc_subnetworks=test_acc_subnetworks,
-                                                      importance_score=importance_score,
-                                                      subnetworks_macs=subnetworks_macs,
-                                                      batch_norm_finetuning=batch_norm_finetuning,
-                                                      train_acc_subnetworks=train_acc_subnetworks, args=args,
-                                                      architecture_name=architecture_name)
-
     return [[test_acc_subnetworks[subnetwork_number][-1]] for subnetwork_number in range(subnetworks_number)]
+
+
+def train_model_vision(model, train_data, val_data, test_data, acc, optimizer, epochs,
+                       subnetworks_number, subnetworks_macs, args, message_initial_accuracies, message="",
+                       square_error_scaling=False,
+                       full_training=False,
+                       importance_score=True, architecture_name="", plot=True, batch_norm_finetuning=False,
+                       debug=False):
+    train_acc_subnetworks = [
+        tf.keras.metrics.SparseCategoricalAccuracy(name='train_accuracy_{}'.format(subnetwork_number)) for
+        subnetwork_number in range(subnetworks_number)]
+
+    test_acc_subnetworks = [
+        tf.keras.metrics.SparseCategoricalAccuracy(name='test_accuracy_{}'.format(subnetwork_number)) for
+        subnetwork_number in range(subnetworks_number)]
+
+    loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+
+    train_loss_subnetworks = [tf.keras.metrics.Mean(name='train_loss_{}'.format(subnetwork_number)) for
+                              subnetwork_number in range(subnetworks_number)]
+    test_loss_subnetworks = [tf.keras.metrics.Mean(name='test_loss_{}'.format(subnetwork_number)) for subnetwork_number
+                             in range(subnetworks_number)]
+
+    log_print(message)
+
+    for epoch in range(epochs):
+
+        [train_acc.reset_states() for train_acc in train_acc_subnetworks]
+        [test_acc.reset_states() for test_acc in test_acc_subnetworks]
+        [train_loss.reset_states() for train_loss in train_loss_subnetworks]
+        [test_loss.reset_states() for test_loss in test_loss_subnetworks]
+
+        try:
+            for x_batch, y_batch in train_data:
+                train_step_reds_vision(x_batch=x_batch, y_batch=y_batch, loss_fn=loss_fn, acc=train_acc_subnetworks,
+                                       model=model, optimizer=optimizer,
+                                       subnetworks_number=subnetworks_number, subnetworks_losses=train_loss_subnetworks)
+        except Exception as e:
+            print(e)
+
+        try:
+            for x_batch, y_batch in test_data:
+                val_step_reds_vision(x_batch=x_batch, y_batch=y_batch, loss_fn=loss_fn, acc=test_acc_subnetworks,
+                                     model=model,
+                                     subnetworks_losses=test_loss_subnetworks)
+        except Exception as e:
+            print(e)
+
+        for subnetwork_number in range(subnetworks_number):
+            log_print(
+                f"subnetworks MACS: {subnetworks_macs[subnetwork_number]} training accuracy: {train_acc_subnetworks[subnetwork_number].result() * 100:.3f}% test accuracy: {100 * test_acc_subnetworks[subnetwork_number].result():.3f}%  training loss: {train_loss_subnetworks[subnetwork_number].result()} test loss: {test_loss_subnetworks[subnetwork_number].result()} ")
+
+    return [test_acc_subnetworks[subnetwork_number].result() for subnetwork_number in range(subnetworks_number)]
 
 
 def set_encoder_layers_training(model, trainable=True):
@@ -369,18 +483,28 @@ def classification_head_finetuning(model, optimizer, train_ds, test_ds, initial_
         test_loss.reset_states()
         test_accuracy.reset_states()
 
-        for images, labels in train_ds:
-            standard_step_train(model=model, images=images, labels=labels, loss_fn=loss_fn, optimizer=optimizer,
-                                train_loss=train_loss, train_accuracy=train_accuracy)
+        try:
+            for images, labels in train_ds:
+                standard_step_train(model=model, images=images, labels=labels, loss_fn=loss_fn, optimizer=optimizer,
+                                    train_loss=train_loss, train_accuracy=train_accuracy)
 
-        for test_images, test_labels in test_ds:
-            standard_step_test(model=model, images=test_images, labels=test_labels, loss_fn=loss_fn,
-                               test_loss=test_loss, test_accuracy=test_accuracy)
+            for test_images, test_labels in test_ds:
+                standard_step_test(model=model, images=test_images, labels=test_labels, loss_fn=loss_fn,
+                                   test_loss=test_loss, test_accuracy=test_accuracy)
 
-        for test_images, test_labels in test_ds:
-            standard_step_test(model=model, images=test_images, labels=test_labels, loss_fn=loss_fn,
-                               test_loss=test_loss, test_accuracy=test_accuracy)
+            for test_images, test_labels in test_ds:
+                standard_step_test(model=model, images=test_images, labels=test_labels, loss_fn=loss_fn,
+                                   test_loss=test_loss, test_accuracy=test_accuracy)
+        except Exception as e:
+            print(e)
 
+        print(
+            f'Head finetuning epoch {epoch + 1}, '
+            f'Loss: {train_loss.result()}, '
+            f'Accuracy: {train_accuracy.result() * 100}, '
+            f'Test Loss: {test_loss.result()}, '
+            f'Test Accuracy: {test_accuracy.result() * 100}'
+        )
         if float(test_accuracy.result()) * 100 >= float(initial_pretrained_test_accuracy):
             print("Early stopping")
             break
@@ -389,7 +513,7 @@ def classification_head_finetuning(model, optimizer, train_ds, test_ds, initial_
     return test_accuracy.result() * 100
 
 
-def classification_head_finetuning_ds_cnn(model, optimizer, train_ds, test_ds, initial_pretrained_test_accuracy, args):
+def classification_head_finetuning_ds_cnn(model, optimizer, train_ds, test_ds, initial_pretrained_test_accuracy, args, print_info=True):
     loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
 
     train_loss = tf.keras.metrics.Mean(name='train_loss')
@@ -405,25 +529,28 @@ def classification_head_finetuning_ds_cnn(model, optimizer, train_ds, test_ds, i
         test_loss.reset_states()
         test_accuracy.reset_states()
 
-        for images, labels in train_ds:
-            standard_step_train(model=model, images=images, labels=labels, loss_fn=loss_fn, optimizer=optimizer,
-                                train_loss=train_loss, train_accuracy=train_accuracy)
+        try:
+            start_time = time.time()
+            for images, labels in train_ds:
+                standard_step_train(model=model, images=images,
+                                    labels=labels, loss_fn=loss_fn, optimizer=optimizer,
+                                    train_loss=train_loss, train_accuracy=train_accuracy)
+            print("--- head finetuning epoch takes: %s seconds ---" % (time.time() - start_time))
+            for test_images, test_labels in test_ds:
+                standard_step_test(model=model, images=test_images,
+                                   labels=test_labels, loss_fn=loss_fn,
+                                   test_loss=test_loss, test_accuracy=test_accuracy)
+        except Exception as e:
+            print(e)
 
-        for test_images, test_labels in test_ds:
-            standard_step_test(model=model, images=test_images, labels=test_labels, loss_fn=loss_fn,
-                               test_loss=test_loss, test_accuracy=test_accuracy)
-
-        for test_images, test_labels in test_ds:
-            standard_step_test(model=model, images=test_images, labels=test_labels, loss_fn=loss_fn,
-                               test_loss=test_loss, test_accuracy=test_accuracy)
-
-        print(
-            f'Head finetuning epoch {epoch + 1}, '
-            f'Loss: {train_loss.result()}, '
-            f'Accuracy: {train_accuracy.result() * 100}, '
-            f'Test Loss: {test_loss.result()}, '
-            f'Test Accuracy: {test_accuracy.result() * 100}'
-        )
+        if print_info:
+            print(
+                f'Head finetuning epoch {epoch + 1}, '
+                f'Loss: {train_loss.result()}, '
+                f'Accuracy: {train_accuracy.result() * 100}, '
+                f'Test Loss: {test_loss.result()}, '
+                f'Test Accuracy: {test_accuracy.result() * 100}'
+            )
 
         if float(test_accuracy.result()) * 100 >= float(initial_pretrained_test_accuracy):
             print("Early stopping")
@@ -431,6 +558,7 @@ def classification_head_finetuning_ds_cnn(model, optimizer, train_ds, test_ds, i
 
     set_encoder_layers_training(model=model, trainable=True)
     return test_accuracy.result() * 100
+
 
 
 def convert_dnn_model_to_reds(pretrained_model, train_ds, args, hidden_units, model_settings,
@@ -482,6 +610,70 @@ def assign_pretrained_trainable_parameters(pretrained_layer, reds_layer, trainin
                 pretrained_layer.weights[trainable_parameter_index])
 
     reds_layer.trainable = trainable
+
+
+def convert_ds_cnn_model_to_vision_reds(pretrained_model, train_ds, args,
+                                        use_bias=True,
+                                        model_filters=64,
+                                        trainable_parameters=True,
+                                        model_size="s",
+                                        training_from_scratch=False,
+                                        trainable_batch_normalization=False):
+    """
+        Given a pretrained model retrieve its corresponding reds model (with the same architecture) and assign to it the
+        weight and bias of the pretrained model
+        @return: reds model initialize with the weight and bias of the pretrained model
+    """
+    pool_size = None
+    feature_vector_size = None
+    if model_size == "s":
+        pool_size = pretrained_model.layers[27].pool_size
+        feature_vector_size = pretrained_model.layers[29].weights[0].shape[0]
+    elif model_size == "l":
+        pool_size = pretrained_model.layers[33].pool_size
+        feature_vector_size = pretrained_model.layers[35].weights[0].shape[0]
+    reds_model = get_reds_ds_cnn_vision_architectures(classes=10,
+                                                      model_size=model_size,
+                                                      model_filters=model_filters,
+                                                      subnetworks_number=args.subnets_number, use_bias=use_bias,
+                                                      in_channels=1 if args.dataset == "mnist" or args.dataset == "fashion_mnist" else 3,
+                                                      debug=False, pool_size=pool_size,
+                                                      feature_vector_size=feature_vector_size)
+
+    # forward one sample to initialize the model's weights
+    for images, _ in train_ds.take(1):
+        reds_model.build(input_shape=images.shape)
+        reds_model.set_subnetworks_number(subnetworks_number=1)
+        reds_model(inputs=images, training=False)
+        reds_model.set_subnetworks_number(subnetworks_number=args.subnets_number)
+
+    for layer_index in range(len(reds_model.layers)):
+
+        if isinstance(pretrained_model.layers[layer_index], tf.keras.layers.DepthwiseConv2D):
+            assign_pretrained_trainable_parameters(pretrained_layer=pretrained_model.layers[layer_index],
+                                                   reds_layer=reds_model.layers[layer_index],
+                                                   training_from_scratch=training_from_scratch,
+                                                   trainable=trainable_parameters)
+
+        if isinstance(pretrained_model.layers[layer_index], tf.keras.layers.Conv2D):
+            assign_pretrained_trainable_parameters(pretrained_layer=pretrained_model.layers[layer_index],
+                                                   reds_layer=reds_model.layers[layer_index],
+                                                   training_from_scratch=training_from_scratch,
+                                                   trainable=trainable_parameters)
+
+        if isinstance(pretrained_model.layers[layer_index], tf.keras.layers.Dense):
+            assign_pretrained_trainable_parameters(pretrained_layer=pretrained_model.layers[layer_index],
+                                                   reds_layer=reds_model.layers[layer_index],
+                                                   training_from_scratch=training_from_scratch,
+                                                   trainable=trainable_parameters)
+
+        if isinstance(pretrained_model.layers[layer_index], tf.keras.layers.BatchNormalization):
+            assign_pretrained_trainable_parameters(pretrained_layer=pretrained_model.layers[layer_index],
+                                                   reds_layer=reds_model.layers[layer_index],
+                                                   training_from_scratch=training_from_scratch,
+                                                   trainable=trainable_batch_normalization)
+
+    return reds_model
 
 
 def convert_ds_cnn_model_to_reds(pretrained_model, train_ds, args, model_settings,
@@ -536,6 +728,9 @@ def convert_ds_cnn_model_to_reds(pretrained_model, train_ds, args, model_setting
                                                    trainable=trainable_batch_normalization)
 
     return reds_model
+
+
+
 
 
 def convert_cnn_model_to_reds(pretrained_model, train_ds, args, model_size_info_convolution, model_settings,
@@ -694,18 +889,18 @@ def compute_validation_accuracy(model, val_data, acc, dataset_type="validation",
 
     for x_batch, y_batch in val_data:
         batch_acc = val_step(x_batch, y_batch, acc, model)
-        # batch_losses_val.append(batch_loss)
         batch_accs.append(batch_acc)
 
     val_loss, val_acc = tf.reduce_mean(batch_losses), tf.reduce_mean(batch_accs)
     log_print(f"{message} {dataset_type} accuracy: {100 * val_acc:.3f}%")
 
 
+
 def val_step_reds(x_batch, y_batch, loss, acc, model):
     batch_losses, batch_accuracies = [], []
 
     # Evaluate the model on given a batch of validation data
-    y_pred = model(inputs=x_batch, training=False)
+    y_pred = model(inputs=x_batch, training=False)  
 
     for subnet_output_index in range(len(y_pred)):
         batch_loss = loss(y_pred[subnet_output_index], y_batch)

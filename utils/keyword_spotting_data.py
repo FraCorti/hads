@@ -54,7 +54,6 @@ def get_few_shot_audio_data(args, model_settings, shots_number, batch_size):
         datasets.append(ds_filtered)
 
     # concatenate all datasets
-    # train_data = tf.data.experimental.concatenate(datasets)
     train_data = reduce(lambda ds1, ds2: ds1.concatenate(ds2), datasets)
 
     train_data = train_data.shuffle(buffer_size=1024,
@@ -340,7 +339,6 @@ class AudioProcessor:
                               model_settings['window_stride_samples'],
                               model_settings['dct_coefficient_count'])
         mfcc = tf.reshape(mfcc, [-1])
-
         return mfcc, label
 
     def _download_and_extract_data(self, data_url, target_directory):

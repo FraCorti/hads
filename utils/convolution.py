@@ -1,13 +1,11 @@
 import time
 
-from keras.utils import conv_utils
 import tensorflow as tf
-from keras import activations
+from tensorflow.python.keras.utils import conv_utils
 import numpy as np
 
 from utils.batch_normalization import Reds_BatchNormalizationBase
 from utils.linear import Linear, Linear_Adaptive
-from utils.logs import log_print
 
 
 def get_reds_cnn_architecture(architecture_name, model_size_info_convolution, model_settings, model_size_info_dense,
@@ -44,15 +42,15 @@ class Reds_Cnn_Wake_Model(tf.keras.Model):
         self.reshape = tf.keras.layers.Reshape(
             (self.model_settings['spectrogram_length'], self.model_settings['dct_coefficient_count'], 1),
             input_shape=(self.model_settings['fingerprint_size'], 1))
-        self.conv1 = Reds_2DConvolution_Standard(in_features=1, out_features=model_size_info_convolution[0],
+        self.conv1 = Reds_2DConvolution_Standard(in_channels=1, out_channels=model_size_info_convolution[0],
                                                  kernel_size=(10, 4),
                                                  batch_dimensions=batch_dimensions,
                                                  use_bias=use_bias, strides=(1, 1),
                                                  debug=debug, padding='valid')
         self.batch_norm1 = Reds_BatchNormalizationBase(fused=False)
         self.relu1 = tf.keras.layers.ReLU()
-        self.conv2 = Reds_2DConvolution_Standard(in_features=model_size_info_convolution[0],
-                                                 out_features=model_size_info_convolution[1], kernel_size=(10, 4),
+        self.conv2 = Reds_2DConvolution_Standard(in_channels=model_size_info_convolution[0],
+                                                 out_channels=model_size_info_convolution[1], kernel_size=(10, 4),
                                                  use_bias=use_bias, strides=(2, 1),
                                                  batch_dimensions=batch_dimensions,
                                                  debug=debug, padding='valid')
@@ -123,8 +121,8 @@ class Reds_Cnn_Wake_Model(tf.keras.Model):
     def set_subnetwork_indexes(self, subnetworks_filters_indexes):
 
         for subnetwork_filters_indexes in subnetworks_filters_indexes:
-            self.conv1.add_splitting_filters_indexes(subnetwork_filters_indexes[0][0])
-            self.conv2.add_splitting_filters_indexes(subnetwork_filters_indexes[0][1])
+            self.conv1.add_splitting_filters_indexes(subnetwork_filters_indexes[0][0] + 1)
+            self.conv2.add_splitting_filters_indexes(subnetwork_filters_indexes[0][1] + 1)
 
     def set_print_hidden_feature(self, print=True):
         self.print_hidden_feature = print
@@ -136,7 +134,7 @@ class Reds_Cnn_Wake_Model(tf.keras.Model):
     def get_model_name(self):
         return "Wake_Word_CNN"
 
-    def compute_lookup_table(self, train_data, average_run=100):
+    def compute_lookup_table(self, train_data):
         """
         Compute the lookup table for the model given the training data set. A batch of the data is passed as input
         inside the model and the linear operation associated to the layer is performed for average_run times. Then the
@@ -145,24 +143,14 @@ class Reds_Cnn_Wake_Model(tf.keras.Model):
         List[List] containing the filters macs for each layer
         """
 
-        inputs = None
-        for images, _ in train_data.take(1):
-            inputs = images
-            break
-
         layers_filters_macs = []
         layers_filters_byte = []
 
-        inputs = self.reshape(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Initial Input shape after Reshape") if self.debug else None
+        inputs = tf.ones((1, 49, 10, 1), dtype=tf.float32)
 
         inputs, macs, filters_byte_memory = self.conv1.compute_layer_lookup_table(inputs=inputs)
         layers_filters_macs.append(macs)
         layers_filters_byte.append(filters_byte_memory)
-
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Conv2D Layer 1") if self.debug else None
 
         inputs = self.batch_norm1(inputs)
         inputs = self.relu1(inputs)
@@ -186,56 +174,39 @@ class Reds_Cnn_Wake_Model(tf.keras.Model):
 
         init_input = self.reshape(init_input)
         init_input = [init_input for _ in range(1)]
-        init_input, times = self.conv1(init_input)
+        init_input = self.conv1(init_input)
         _ = self.batch_norm1.build(init_input[0].shape)
 
-        init_input, times = self.conv2(init_input)
+        init_input = self.conv2(init_input)
         _ = self.batch_norm2.build(init_input[0].shape)
         init_input = [tf.keras.layers.Flatten()(input) for input in init_input]
 
-        init_input, times = self.fc1(init_input)
-        init_input, times = self.fc2(init_input)
+        init_input = self.fc1(init_input)
+        init_input = self.fc2(init_input)
         _ = self.batch_norm3.build(init_input[0].shape)
-        _, _ = self.fc3(init_input)
+        _ = self.fc3(init_input)
 
         self.built = True
 
     def call(self, inputs, training=None, mask=None):
 
         inputs = self.reshape(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Initial Input shape after Reshape") if self.debug else None
 
         # copy the input once for each subnetwork
         inputs = [inputs for _ in range(self.subnetworks_number)]
 
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Initial Inputs shape") if self.debug else None
-
-        inputs, times = self.conv1(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Conv2D Layer 1") if self.debug else None
-
+        inputs = self.conv1(inputs)
         inputs = self.batch_norm1(inputs)
         inputs = [self.relu1(input) for input in inputs]
-
-        inputs, times = self.conv2(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Conv2D Layer 2") if self.debug else None
+        inputs = self.conv2(inputs)
         inputs = self.batch_norm2(inputs)
         inputs = [self.relu2(input) for input in inputs]
-
         inputs = [tf.keras.layers.Flatten()(input) for input in inputs]
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="AFTER Flatten") if self.debug else None
-        inputs, times = self.fc1(inputs)
-        inputs, times = self.fc2(inputs)
+        inputs = self.fc1(inputs)
+        inputs = self.fc2(inputs)
         inputs = self.batch_norm3(inputs)
         inputs = [self.relu3(input) for input in inputs]
-
-        inputs, times = self.fc3(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="LAST output vector") if self.debug else None
+        inputs = self.fc3(inputs)
 
         return inputs
 
@@ -312,7 +283,7 @@ class Reds_Cnn_Wake_Model(tf.keras.Model):
 
 class Reds_2DConvolution_Standard(tf.keras.layers.Layer):
 
-    def __init__(self, in_features=1, out_features=32, kernel_size=(3, 3),
+    def __init__(self, in_channels=1, out_channels=32, kernel_size=(3, 3),
                  kernel_initializer='glorot_uniform',
                  bias_initializer='glorot_uniform',
                  activation="relu",
@@ -328,17 +299,16 @@ class Reds_2DConvolution_Standard(tf.keras.layers.Layer):
 
         super(Reds_2DConvolution_Standard, self).__init__()
         self.kernel_size = kernel_size
-        self.filters = out_features
-        self.input_dimension = in_features
+        self.filters = out_channels
+        self.input_dimension = in_channels
         self.groups = groups or 1
         self.rank = rank
         self.use_bias = use_bias
         self.bias_initializer = bias_initializer
         self.kernel_initializer = kernel_initializer
         self.padding = conv_utils.normalize_padding(padding)
-        self.activation = activations.get(activation)
         self.strides = conv_utils.normalize_tuple(
-            strides, rank, "strides", allow_zero=True
+            strides, rank, "strides"
         )
         self.dilation_rate = conv_utils.normalize_tuple(
             dilation_rate, rank, "dilation_rate"
@@ -388,12 +358,12 @@ class Reds_2DConvolution_Standard(tf.keras.layers.Layer):
         # pointwise convolution layer
         if self.kernel.shape[0] == 1:
             return np.prod(self.kernel[:, :, :, 0:int(self.filters_splittings[subnetwork_index])].shape) + np.prod(
-                self.b[:int(self.filters_splittings[subnetwork_index])].shape)
+                self.b[:int(self.filters_splittings[subnetwork_index])].shape) if self.use_bias else 0
         else:
             # first convolution layer, to change if standard cnn are used
             return np.prod(self.kernel[:, :, :,
                            0:int(self.filters_splittings[subnetwork_index])].shape) + np.prod(
-                self.b[:int(self.filters_splittings[subnetwork_index])].shape)
+                self.b[:int(self.filters_splittings[subnetwork_index])].shape) if self.use_bias else 0
 
     def add_splitting_filters_indexes(self, filters_indexes):
         self.filters_splittings = tf.concat([self.filters_splittings, tf.constant([filters_indexes], dtype=tf.int32)],
@@ -435,11 +405,8 @@ class Reds_2DConvolution_Standard(tf.keras.layers.Layer):
 
     def call(self, inputs, **kwargs):
 
-        times = np.zeros((len(inputs)), dtype=float)
-
         for subnet_number in range(len(inputs)):
 
-            forward_start = time.time()
             inputs[subnet_number] = tf.nn.convolution(
                 input=inputs[subnet_number],
                 filters=self.kernel[:, :, 0:inputs[subnet_number].shape[self.batch_dimensions - 1],
@@ -452,13 +419,10 @@ class Reds_2DConvolution_Standard(tf.keras.layers.Layer):
                 inputs[subnet_number] = tf.nn.bias_add(inputs[subnet_number],
                                                        self.b[:int(self.filters_splittings[subnet_number])])
 
-            forward_end = time.time()
-            times[subnet_number] = forward_end - forward_start
-
         if self.registered_subnetworks_kernels_number is False and len(inputs) > 1:
             self.registered_subnetworks_kernels_number = True
 
-        return inputs, times
+        return inputs
 
     def get_parameters(self):
         return self.get_weights()

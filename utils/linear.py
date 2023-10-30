@@ -24,8 +24,6 @@ class Linear_Adaptive(tf.keras.layers.Layer):
 
     def call(self, inputs, **kwargs):
 
-        times = np.zeros((len(inputs)), dtype=float)
-
         for subnet_number in range(len(inputs)):
 
             if self.registered_subnetworks_input_feature_number is False and len(inputs) > 1:
@@ -38,23 +36,22 @@ class Linear_Adaptive(tf.keras.layers.Layer):
                 log_print(
                     f"Dense weights cuttings: {self.w[0:inputs[subnet_number].shape[1], :].shape}")
 
-            forward_start = time.time()
             inputs[subnet_number] = tf.matmul(inputs[subnet_number],
                                               self.w[0:inputs[subnet_number].shape[1], :])
 
             if self.use_bias:
                 inputs[subnet_number] = tf.nn.bias_add(inputs[subnet_number], self.b)
 
-            forward_end = time.time()
-            times[subnet_number] = forward_end - forward_start
-
         if self.registered_subnetworks_input_feature_number is False and len(inputs) > 1:
             self.registered_subnetworks_input_feature_number = True
 
-        return inputs, times
+        return inputs
 
-    def get_trainable_parameters_number(self):
-        return np.prod(self.w.shape) + np.prod(self.b.shape)
+    def get_trainable_parameters_number(self, subnetwork_index=0):
+        if self.registered_subnetworks_input_feature_number == True:
+            return np.prod(self.w[:,0:self.subnetworks_input_feature[subnetwork_index]].shape) + np.prod(
+                self.b.shape)
+        return np.prod(self.w) + np.prod(self.b.shape)
 
     def get_parameters(self):
         return self.get_weights()
@@ -147,10 +144,7 @@ class Reds_Dnn_Wake_Model(tf.keras.Model):
         """
         Compute the number of MACs and the number of bytes of each layer contained inside the model
         """
-        inputs = None
-        for images, _ in train_data.take(1):
-            inputs = images
-            break
+        inputs = tf.ones((1, 250), dtype=tf.float32)
 
         layers_filters_macs = []
         layers_filters_byte = []
@@ -171,22 +165,22 @@ class Reds_Dnn_Wake_Model(tf.keras.Model):
         print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
                                        message="Inputs shape") if self.debug else None
 
-        inputs, times = self.fc1(inputs)
+        inputs = self.fc1(inputs)
         inputs = [self.relu1(input) for input in inputs]
         print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
                                        message="FC1 Layer") if self.debug else None
 
-        inputs, times = self.fc2(inputs)
+        inputs = self.fc2(inputs)
         inputs = [self.relu2(input) for input in inputs]
         print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
                                        message="FC2 Layer") if self.debug else None
 
-        inputs, times = self.fc3(inputs)
+        inputs = self.fc3(inputs)
         inputs = [self.relu3(input) for input in inputs]
         print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
                                        message="FC3 Layer") if self.debug else None
 
-        inputs, times = self.fc4(inputs)
+        inputs = self.fc4(inputs)
         print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
                                        message="LAST output vector") if self.debug else None
 
@@ -262,25 +256,15 @@ class Reds_Linear(tf.keras.layers.Layer):
         @return:
         """
 
-        times = np.zeros((len(inputs)), dtype=float)
-
         for subnet_number in range(len(inputs)):
 
-            forward_start = 0.0
-            forward_end = 0.0
-
-            forward_start += time.time()
             inputs[subnet_number] = tf.matmul(inputs[subnet_number],
                                               self.w[0:inputs[subnet_number].shape[1],
                                               0:self.neurons_splittings[subnet_number]])
             if self.use_bias:
                 inputs[subnet_number] = tf.add(inputs[subnet_number], self.b[0:self.neurons_splittings[subnet_number]])
 
-            forward_end += time.time()
-
-            times[subnet_number] = forward_end - forward_start
-
-        return inputs, times
+        return inputs
 
     def get_parameters(self):
         return self.get_weights()
@@ -325,20 +309,14 @@ class Linear(tf.keras.layers.Layer):
 
     def call(self, inputs, **kwargs):
 
-        times = np.zeros((len(inputs)), dtype=float)
-
         for subnet_number in range(len(inputs)):
 
-            forward_start = time.time()
             inputs[subnet_number] = tf.matmul(inputs[subnet_number], self.w)
 
             if self.use_bias:
                 inputs[subnet_number] = tf.nn.bias_add(inputs[subnet_number], self.b)
 
-            forward_end = time.time()
-            times[subnet_number] = forward_end - forward_start
-
-        return inputs, times
+        return inputs
 
     def get_trainable_parameters_number(self, subnetwork_index=0):
         return self.w.shape[0] * self.w.shape[1] + self.b.shape[0] if self.use_bias else 0

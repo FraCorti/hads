@@ -1,8 +1,125 @@
 import math
+import os
 from functools import partial
 
 from ortools.linear_solver import pywraplp
 from utils.logs import log_print
+import time
+
+
+def setup_gurobi(args):
+    os.environ[
+        'GUROBI_HOME'] = args.gurobi_home
+    os.environ['GRB_LICENSE_FILE'] = args.gurobi_license_file
+
+    print("Gurobi settings:")
+    print(os.getenv('GUROBI_HOME'))
+    print(os.getenv('GRB_LICENSE_FILE'))
+
+
+def knapsack_find_splits_mobilenetv1(importance_score_feature_extraction_filters, macs_list, memory_list, macs_targets,
+                                     memory_targets,
+                                     importance_score_pointwise_filters_kernels,
+                                     layers_filter_macs, args, bottom_up=True,
+                                     last_pointwise_filters=1) \
+        :
+    feature_extraction_layer_filters = [list(range(0, len(importance_score_feature_extraction_filters[i]), 1)) for i in
+                                        range(len(importance_score_feature_extraction_filters))]
+
+    dense_model_macs = [sum(layers_filter_macs[layer_index]) for layer_index in range(len(layers_filter_macs))]
+    subnetworks_macs = [int(sum(dense_model_macs))]
+
+    subnetworks_filters_first_convolution = [[] for _ in range(args.subnets_number - 1)]
+    subnetworks_filters_pointwise = [[] for _ in range(args.subnets_number - 1)]
+    subnetworks_filters_depthwise = [[] for _ in range(args.subnets_number - 1)]
+
+    if bottom_up:
+        log_print("Running bottom-up solver")
+        # initialize subsolutions data structure to store the optimal solutions for each subnetwork found by the solver
+        optimal_subsolutions_first_layer = [0 for _ in range(len(importance_score_feature_extraction_filters[0]))]
+
+        optimal_subsolutions_feature_extraction = [
+            [0 for _ in range(len(importance_score_feature_extraction_filters[i]))] for i in
+            range(1, len(importance_score_feature_extraction_filters))]
+        optimal_subsolutions_feature_creation = [[0 for _ in range(len(importance_score_pointwise_filters_kernels[i]))]
+                                                 for i in
+                                                 range(len(importance_score_pointwise_filters_kernels))]
+    else:
+        log_print("Running top-down solver")
+        macs_targets.reverse()
+
+    residual_macs = 0
+
+    for subnetwork_mac_index in range(len(macs_targets)):
+
+        subnetwork_residual_macs = -1
+        solver_time_multiplier = 1
+        solver_max_iteration = args.solver_max_iterations
+
+        while subnetwork_residual_macs <= 0 and solver_max_iteration > 0:
+
+            log_print("Solver iteration: {} MACs capacity: {}".format(solver_time_multiplier, int(
+                macs_targets[subnetwork_mac_index] + residual_macs)))
+
+            if bottom_up:
+                first_layer_index, depthwise_layers_indexes, pointwise_layers_indexes, solution_macs = ortools_knapsack_solver_mobilenetv1(
+                    feature_extraction_layers_filters_indexes=feature_extraction_layer_filters,
+                    weights_macs_layers=macs_list,
+                    weights_memory=memory_list,
+                    feature_extraction_filters_score=importance_score_feature_extraction_filters,
+                    capacity_macs=int(macs_targets[subnetwork_mac_index] + residual_macs) if bottom_up else int(
+                        macs_targets[subnetwork_mac_index]),
+                    importance_score_pointwise_filters_kernels=importance_score_pointwise_filters_kernels,
+                    capacity_memory_size=memory_targets[subnetwork_mac_index],
+                    previous_optimal_solution_first_layer=optimal_subsolutions_first_layer,
+                    previous_optimal_solution_feature_extraction=optimal_subsolutions_feature_extraction,
+                    previous_optimal_solution_feature_creation=optimal_subsolutions_feature_creation,
+                    solver_time_limit=args.solver_time_limit * solver_time_multiplier,
+                    last_pointwise_filters=last_pointwise_filters,
+                    last_solution_iteration_search=True if solver_time_multiplier == solver_max_iteration else False)
+
+            else:
+                first_layer_index, depthwise_layers_indexes, pointwise_layers_indexes, solution_macs = ortools_knapsack_solver_mobilenetv1(
+                    feature_extraction_layers_filters_indexes=feature_extraction_layer_filters,
+                    weights_macs_layers=macs_list,
+                    weights_memory=memory_list,
+                    importance_score_pointwise_filters_kernels=importance_score_pointwise_filters_kernels,
+                    feature_extraction_filters_score=importance_score_feature_extraction_filters,
+                    capacity_macs=int(macs_targets[subnetwork_mac_index] + residual_macs) if bottom_up else int(
+                        macs_targets[subnetwork_mac_index]),
+                    capacity_memory_size=memory_targets[subnetwork_mac_index],
+                    solver_time_limit=args.solver_time_limit * solver_time_multiplier,
+                    last_pointwise_filters=last_pointwise_filters,
+                    last_solution_iteration_search=True if solver_time_multiplier == solver_max_iteration else False)
+
+            subnetwork_residual_macs = macs_targets[subnetwork_mac_index] + residual_macs - solution_macs
+
+            if subnetwork_residual_macs >= 0:
+
+                log_print("The solver found a solution. Search the next solution.")
+
+                # store the optimal solution for the current subnetwork
+                subnetworks_filters_first_convolution[subnetwork_mac_index].append(first_layer_index)
+                subnetworks_filters_depthwise[subnetwork_mac_index].append(depthwise_layers_indexes)
+                subnetworks_filters_pointwise[subnetwork_mac_index].append(pointwise_layers_indexes)
+                subnetworks_macs.append(solution_macs)
+
+                residual_macs = subnetwork_residual_macs  # update the residual macs for the next iteration
+
+                if residual_macs < 0:
+                    residual_macs = 0
+                else:
+                    log_print("Residual macs: {}, added to the next iteration".format(residual_macs))
+
+                break
+
+            solver_time_multiplier += 1
+            solver_max_iteration -= 1
+
+            log_print("MACs target: {} Current network architecture MACS: {} Residual macs: {}".format(
+                macs_targets[subnetwork_mac_index], solution_macs, residual_macs))
+
+    return subnetworks_filters_first_convolution, subnetworks_filters_depthwise, subnetworks_filters_pointwise, subnetworks_macs
 
 
 def knapsack_find_splits_ds_cnn(importance_list, macs_list, memory_list, macs_targets, memory_targets,
@@ -42,7 +159,7 @@ def knapsack_find_splits_ds_cnn(importance_list, macs_list, memory_list, macs_ta
         while subnetwork_residual_macs <= 0 and solver_max_iteration > 0:
 
             log_print("Solver iteration: {} MACs capacity: {}".format(solver_time_multiplier, int(
-                macs_targets[subnetwork_mac_index] + residual_macs)))
+                macs_targets[subnetwork_mac_index])))
 
             if bottom_up:
                 first_layer_index, depthwise_layers_indexes, pointwise_layers_indexes, solution_macs = ortools_knapsack_solver_ds_cnn(
@@ -50,8 +167,8 @@ def knapsack_find_splits_ds_cnn(importance_list, macs_list, memory_list, macs_ta
                     weights_memory=memory_list,
                     filters_score=importance_list,
                     units_layer_size=units_layer_size,
-                    capacity_macs=int(macs_targets[subnetwork_mac_index] + residual_macs) if bottom_up else int(
-                        macs_targets[subnetwork_mac_index]),
+                    capacity_macs=int(macs_targets[subnetwork_mac_index]) if bottom_up else int(
+                        macs_targets[subnetwork_mac_index]),  # + residual_macs
                     importance_score_pointwise_filters_kernels=importance_score_pointwise_filters_kernels,
                     capacity_memory_size=memory_targets[subnetwork_mac_index],
                     previous_optimal_solution_first_layer=optimal_subsolutions_first_layer,
@@ -68,8 +185,8 @@ def knapsack_find_splits_ds_cnn(importance_list, macs_list, memory_list, macs_ta
                     importance_score_pointwise_filters_kernels=importance_score_pointwise_filters_kernels,
                     filters_score=importance_list,
                     units_layer_size=units_layer_size,
-                    capacity_macs=int(macs_targets[subnetwork_mac_index] + residual_macs) if bottom_up else int(
-                        macs_targets[subnetwork_mac_index]),
+                    capacity_macs=int(macs_targets[subnetwork_mac_index]) if bottom_up else int(
+                        macs_targets[subnetwork_mac_index]),  # + residual_macs
                     capacity_memory_size=memory_targets[subnetwork_mac_index],
                     solver_time_limit=args.solver_time_limit * solver_time_multiplier,
                     last_pointwise_filters=last_pointwise_filters,
@@ -114,41 +231,31 @@ def knapsack_find_splits_dnn(importance_list, macs_list, memory_list, macs_targe
                              args, bottom_up=True):
     classes = [list(range(0, len(importance_list[i]), 1)) for i in range(len(importance_list))]
 
+    if bottom_up:
+        log_print("Running Bottom-up solver")
+    else:
+        log_print("Running Top-down solver")
+        macs_targets.reverse()
+
     subnetworks_macs = [int(sum(layers_filter_macs[0]) + sum(layers_filter_macs[1] + sum(layers_filter_macs[2])))]
     for subnetwork_macs in macs_targets:
         subnetworks_macs.append(subnetwork_macs)
 
     subnetworks_neurons_indexes = [[] for _ in range(args.subnets_number - 1)]
 
-    contains_zero = (lambda f, nested_list: any(
+    # initialize subsolutions data structure
+    optimal_subsolutions = [[0 for _ in range(len(importance_list[i]))] for i in range(len(importance_list))]
 
-        f(f, sub_list) if isinstance(sub_list, list) else sub_list == 0 for sub_list in nested_list))
-    contains_zero_recursive = partial(contains_zero, contains_zero)
-
-    correctness = False
-
-    while correctness is False:
-
-        # initialize subsolutions data structure
-        optimal_subsolutions = [[0 for _ in range(len(importance_list[i]))] for i in range(len(importance_list))]
-
-        # apply the solver on the model to find the splits
-        for subnetwork_mac_index in range(len(macs_targets)):
-            filter_indexes = ortools_knapsack_solver_dnn(classes=classes, weights_macs=macs_list,
-                                                         weights_memory=memory_list,
-                                                         filters_score=importance_list,
-                                                         capacity_macs=macs_targets[subnetwork_mac_index],
-                                                         capacity_memory_size=memory_targets[subnetwork_mac_index],
-                                                         bottom_up=bottom_up,
-                                                         previous_optimal_solution=optimal_subsolutions)
-            subnetworks_neurons_indexes[subnetwork_mac_index].append(filter_indexes)
-
-        # check if all the layers contain at least one filter in each subnetwork
-        if not contains_zero_recursive(subnetworks_neurons_indexes):
-            correctness = True
-        else:
-            subnetworks_neurons_indexes = [[] for _ in range(args.subnets_number - 1)]
-            log_print("The solver found a subnetwork with a layer without filters. Restarting the solver...")
+    # apply the solver on the model to find the splits
+    for subnetwork_mac_index in range(len(macs_targets)):
+        filter_indexes = ortools_knapsack_solver_dnn(classes=classes, weights_macs=macs_list,
+                                                     weights_memory=memory_list,
+                                                     filters_score=importance_list,
+                                                     capacity_macs=macs_targets[subnetwork_mac_index],
+                                                     capacity_memory_size=memory_targets[subnetwork_mac_index],
+                                                     bottom_up=bottom_up,
+                                                     previous_optimal_solution=optimal_subsolutions if bottom_up else None)
+        subnetworks_neurons_indexes[subnetwork_mac_index].append(filter_indexes)
 
     print("Subnetworks splittings: {}".format(subnetworks_neurons_indexes))
 
@@ -158,6 +265,12 @@ def knapsack_find_splits_dnn(importance_list, macs_list, memory_list, macs_targe
 def knapsack_find_splits_cnn(importance_list, macs_list, memory_list, macs_targets, memory_targets, layers_filter_macs,
                              args, bottom_up=True):
     classes = [list(range(0, len(importance_list[i]), 1)) for i in range(len(importance_list))]
+
+    if bottom_up:
+        log_print("Running Bottom-up solver")
+    else:
+        log_print("Running Top-down solver")
+        macs_targets.reverse()
 
     subnetworks_macs = [int(sum(layers_filter_macs[0]) + sum(layers_filter_macs[1]))]
     for subnetwork_macs in macs_targets:
@@ -185,14 +298,14 @@ def knapsack_find_splits_cnn(importance_list, macs_list, memory_list, macs_targe
                                                          capacity_macs=macs_targets[subnetwork_mac_index],
                                                          capacity_memory_size=memory_targets[subnetwork_mac_index],
                                                          bottom_up=bottom_up,
-                                                         previous_optimal_solution=optimal_subsolutions)
+                                                         previous_optimal_solution=optimal_subsolutions if bottom_up else None)
             subnetworks_filters_indexes[subnetwork_mac_index].append(filter_indexes)
 
         # check if all the layers contain at least one filter in each subnetwork
         if not contains_zero_recursive(subnetworks_filters_indexes):
             correctness = True
         else:
-            subnetworks_filters_indexes = [[] for _ in range(args.subnets_number - 1)]
+            subnetworks_filters_indexes = [[] for _ in range(args.subnets_number)]
             log_print("The solver found a subnetwork with a layer without filters. Restarting the solver...")
 
     print("Subnetworks splittings: {}".format(subnetworks_filters_indexes))
@@ -211,9 +324,6 @@ def initialize_nested_knapsack_solver_dnn(layers_filters_macs, layers_filters_by
         importance_scores_filters (List[List[int]]): The importance score list in descending orders.
     Returns:
     """
-
-    if constraints_percentages is None:
-        constraints_percentages = [0.25, 0.5, 0.75]
 
     log_print("Constraints percentages: {}".format(constraints_percentages))
     macs_list = []
@@ -243,11 +353,11 @@ def initialize_nested_knapsack_solver_dnn(layers_filters_macs, layers_filters_by
     memory_targets = []
 
     # scale the initial target to be the subnetworks constraints
-    for subnetworks_number in range(subnetworks_number):
+    for subnetworks_number in range(subnetworks_number - 1):
         macs_targets.append(round(initial_macs * constraints_percentages[subnetworks_number]))
         memory_targets.append(round(initial_memory * constraints_percentages[subnetworks_number]))
 
-    log_print("MACS targets: {}".format(macs_targets))
+    log_print("Initial MACS: {} MACS targets: {}".format(initial_macs, macs_targets))
 
     return descending_importance_score_scores, layers_filters_macs, layers_filters_byte, macs_targets, memory_targets
 
@@ -263,9 +373,6 @@ def initialize_nested_knapsack_solver_ds_cnn(layers_filters_macs, layers_filters
         importance_scores_filters (List[List[int]]): The importance score list in descending orders.
     Returns:
     """
-
-    if constraints_percentages is None:
-        constraints_percentages = [0.25, 0.5, 0.75]
 
     log_print("Constraints percentages: {}".format(constraints_percentages))
     macs_list = []
@@ -283,7 +390,7 @@ def initialize_nested_knapsack_solver_ds_cnn(layers_filters_macs, layers_filters
             macs_list.append(layers_filters_macs[layer_index][item_index])
             layers_filters_byte_list.append(layers_filters_byte[layer_index][item_index])
 
-            layers_filters_macs[layer_index][item_index] = round(layers_filters_macs[layer_index][item_index] / 10000)
+            layers_filters_macs[layer_index][item_index] = round(layers_filters_macs[layer_index][item_index])
 
     # The smallest index of neurons belonging to each layer
     layer_index_split = []
@@ -295,7 +402,7 @@ def initialize_nested_knapsack_solver_ds_cnn(layers_filters_macs, layers_filters
             layer_index_split.append(len(layers_filters_macs[layer_index - 1]))
         initial_index += len(layers_filters_macs[layer_index])
 
-    macs_list_scaled = [round(filter_macs / 10000) for filter_macs in macs_list]
+    macs_list_scaled = [round(filter_macs) for filter_macs in macs_list]
 
     initial_macs = sum(macs_list_scaled)
     initial_memory = sum(layers_filters_byte_list)
@@ -304,18 +411,18 @@ def initialize_nested_knapsack_solver_ds_cnn(layers_filters_macs, layers_filters
     memory_targets = []
 
     # scale the initial target to be the subnetworks constraints
-    for subnetworks_number in range(subnetworks_number):
+    for subnetworks_number in range(subnetworks_number - 1):
         macs_targets.append(round(initial_macs * constraints_percentages[subnetworks_number]))
         memory_targets.append(round(initial_memory * constraints_percentages[subnetworks_number]))
 
-    log_print("MACS targets: {}".format(macs_targets))
+    log_print("Initial MACS: {} MACS targets: {}".format(initial_macs, macs_targets))
 
     return descending_importance_score_scores, layers_filters_macs, layers_filters_byte, macs_targets, memory_targets
 
 
-def initialize_nested_knapsack_solver(layers_filters_macs, layers_filters_byte,
-                                      descending_importance_score_scores,
-                                      int_scale_value=1e5, subnetworks_number=3):
+def initialize_nested_knapsack_solver_cnn(layers_filters_macs, layers_filters_byte,
+                                          descending_importance_score_scores,
+                                          int_scale_value=1e5, subnetworks_number=3, constraints_percentages=None):
     """Initialize the knapsack solver data structures by scaling the macs and the descending importance score.
 
     Args:
@@ -338,7 +445,7 @@ def initialize_nested_knapsack_solver(layers_filters_macs, layers_filters_byte,
 
             descending_importance_score_scores[layer_index][item_index] = round(
                 descending_importance_score_scores[layer_index][item_index] * int_scale_value)
-            layers_filters_macs[layer_index][item_index] = round(layers_filters_macs[layer_index][item_index] / 10000)
+            layers_filters_macs[layer_index][item_index] = round(layers_filters_macs[layer_index][item_index] )
 
     # The smallest index of neurons belonging to each layer
     layer_index_split = []
@@ -350,7 +457,7 @@ def initialize_nested_knapsack_solver(layers_filters_macs, layers_filters_byte,
             layer_index_split.append(len(layers_filters_macs[layer_index - 1]))
         initial_index += len(layers_filters_macs[layer_index])
 
-    macs_list_scaled = [round(filter_macs / 10000) for filter_macs in macs_list]
+    macs_list_scaled = [round(filter_macs) for filter_macs in macs_list]
 
     initial_macs = sum(macs_list_scaled)
     initial_memory = sum(layers_filters_byte_list)
@@ -358,10 +465,9 @@ def initialize_nested_knapsack_solver(layers_filters_macs, layers_filters_byte,
     memory_targets = []
 
     # scale the initial target to be the subnetworks constraints
-    percentages = [0.25, 0.5, 0.75]
-    for subnetworks_number in range(subnetworks_number):
-        macs_targets.append(round(initial_macs * percentages[subnetworks_number]))
-        memory_targets.append(round(initial_memory * percentages[subnetworks_number]))
+    for subnetworks_number in range(subnetworks_number - 1):
+        macs_targets.append(round(initial_macs * constraints_percentages[subnetworks_number]))
+        memory_targets.append(round(initial_memory * constraints_percentages[subnetworks_number]))
 
     return descending_importance_score_scores, layers_filters_macs, layers_filters_byte, macs_targets, memory_targets
 
@@ -571,10 +677,15 @@ def ortools_knapsack_solver_ds_cnn(layers, weights_macs_layers, weights_memory, 
                     pointwise_kernel_index in range(len(layer_units))) >=
                            x_i[layer_index - 1] - (1 - pointwise_filters[layer_index][unit_index]) * units_layer_size)
 
-    # Print model to file for debug purposes 
+    # Print model to file for debug purposes
     # log_print(solver.ExportModelAsLpFormat(False), printing=False)
     # Solve
+    start_time = time.time()
     status = solver.Solve()
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    log_print(f"Elapsed time: {elapsed_time} seconds")
+
     first_convolution_layer_indexes = []  # indexes of the first convolution layer
     depthwise_indexes = [[] for _ in range(len(depthwise_filters))]
     pointwise_indexes = [[] for _ in range(len(pointwise_filters))]
@@ -655,7 +766,7 @@ def ortools_knapsack_solver_ds_cnn(layers, weights_macs_layers, weights_memory, 
 
 def ortools_knapsack_solver_dnn(classes, weights_macs, weights_memory, filters_score, capacity_macs,
                                 capacity_memory_size,
-                                previous_optimal_solution, bottom_up=True, solver_name='GUROBI'):
+                                previous_optimal_solution=None, bottom_up=True, solver_name='GUROBI'):
     """
 
     @param previous_optimal_solution: data structure used to store the previous optimal solution found
@@ -666,7 +777,7 @@ def ortools_knapsack_solver_dnn(classes, weights_macs, weights_memory, filters_s
     @return: a List[int] indicating the number of filters to use for each Convolution Layer
     """
     solver = pywraplp.Solver.CreateSolver(solver_name)
-    solver.EnableOutput()
+    #solver.EnableOutput()
 
     # Create binary variables for each computational unit
     x = []
@@ -682,6 +793,12 @@ def ortools_knapsack_solver_dnn(classes, weights_macs, weights_memory, filters_s
         solver.Sum(
             x[i][j] * int(weights_macs[i][j]) for i in range(len(classes)) for j in range(len(classes[i]))) <= int(
             capacity_macs))
+
+    # Constraint: taking on variable for each layer at least
+    x_i = [solver.IntVar(0, len(classes[i]), f'x_{i}') for i in range(0, len(classes))]
+    for i in range(0, len(classes)):
+        solver.Add(x_i[i] == solver.Sum(x[i]))
+        solver.Add(x_i[i] >= 2)
 
     if bottom_up:
         # Constraint: select the items previously found by the knapsack solver
@@ -701,17 +818,25 @@ def ortools_knapsack_solver_dnn(classes, weights_macs, weights_memory, filters_s
                 if x[i][j].solution_value() == 1:
                     filters_indexes[i].append(j)
 
-                    if previous_optimal_solution[i][j] == 0:
-                        previous_optimal_solution[i][j] = 1
+                    if bottom_up:
+                        if previous_optimal_solution[i][j] == 0:
+                            previous_optimal_solution[i][j] = 1
     else:
         print('The problem does not have an optimal solution.')
+
+    solution_macs = 0
+    solution_macs += sum([weights_macs[0][index] for index in filters_indexes[0]])
+    solution_macs += sum([weights_macs[1][index] for index in filters_indexes[1]])
+    solution_macs += sum([weights_macs[2][index] for index in filters_indexes[2]])
+    print("Subnetworks MACs: {}".format(solution_macs))
+
 
     return [max(filter_indexes) for filter_indexes in filters_indexes]
 
 
 def ortools_knapsack_solver_cnn(classes, weights_macs, weights_memory, capacity_memory_size, filters_score,
                                 capacity_macs,
-                                previous_optimal_solution, bottom_up=True, solver_name='GUROBI'):
+                                previous_optimal_solution=None, bottom_up=True, solver_name='GUROBI'):
     """
 
     @param previous_optimal_solution: data structure used to store the previous optimal solution found
@@ -722,7 +847,7 @@ def ortools_knapsack_solver_cnn(classes, weights_macs, weights_memory, capacity_
     @return: a List[int] indicating the number of filters to use for each Convolution Layer
     """
     solver = pywraplp.Solver.CreateSolver(solver_name)
-    solver.EnableOutput()
+    #solver.EnableOutput()
 
     # Create binary variables for each computational unit
     x = []
@@ -738,6 +863,11 @@ def ortools_knapsack_solver_cnn(classes, weights_macs, weights_memory, capacity_
         solver.Sum(
             x[i][j] * int(weights_macs[i][j]) for i in range(len(classes)) for j in range(len(classes[i]))) <= int(
             capacity_macs))
+
+    x_i = [solver.IntVar(0, len(classes[i]), f'x_{i}') for i in range(0, len(classes))]
+    for i in range(0, len(classes)):
+        solver.Add(x_i[i] == solver.Sum(x[i]))
+        solver.Add(x_i[i] >= 2)
 
     if bottom_up:
         # Constraint: select the items previously found by the knapsack solver
@@ -757,11 +887,13 @@ def ortools_knapsack_solver_cnn(classes, weights_macs, weights_memory, capacity_
                 if x[i][j].solution_value() == 1:
                     filters_indexes[i].append(j)
 
-                    # save new solution found by the knapsack solver for the next iteration
-                    if previous_optimal_solution[i][j] == 0:
-                        previous_optimal_solution[i][j] = 1
+                    if bottom_up:
+                        # save new solution found by the knapsack solver for the next iteration
+                        if previous_optimal_solution[i][j] == 0:
+                            previous_optimal_solution[i][j] = 1
+
+        print("Solution MACS: {}".format(sum([weights_macs[i][index] for i, index in enumerate(filters_indexes)])))
     else:
         print('The problem does not have an optimal solution.')
 
     return [max(filter_indexes) for filter_indexes in filters_indexes]
-

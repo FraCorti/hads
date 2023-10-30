@@ -25,12 +25,18 @@ Change linux64 with your operating system version.
 For each program, you can specify the usage of the GPU by passing an id number from the  `--cuda_device` argument. In the default configuration, all the experiments results are stored inside the /logs directory and printed to the screen.
 For each program, you can specify the solver's maximum running time per iteration by passing the value in seconds to the
 `--solver_time_limit` argument. For the DS-CNN size L, the suggested time is at least 3 hours (10800
-seconds). The final number of pointwise filters (e.g. final feature vector dimension) can be specified by passing the value
-to the `--last_pointwise_filters`
-argument.
+seconds).
 
 All the individual subnetwork architectures can be trained in isolation by running the `_full_training.py` files. 
- 
+
+**Train DS-CNN models**
+
+```
+python kws_ds_convolution.py --gurobi_license_file path/to/license/gurobi.lic --gurobi_home path/to/installation//gurobi/gurobi1002/linux64 
+```
+
+To train the REDS DS-CNN S models on *CIFAR10* or *Fashion-MNIST* run for the former the *vision_ds_convolution_fashion_mnist.py* file and for the latter *vision_ds_convolution_cifar10.py* file. The pre-trained models are stored in the models folder.
+
 **Train DNN models**
 
 ```
@@ -42,14 +48,6 @@ python kws_dnn.py --gurobi_license_file path/to/license/gurobi.lic --gurobi_home
 ```
 python kws_convolution_cnn.py --gurobi_license_file path/to/license/gurobi.lic --gurobi_home path/to/installation//gurobi/gurobi1002/linux64 
 ```
-
-**Train DS-CNN models**
-
-```
-python kws_ds_convolution.py --gurobi_license_file path/to/license/gurobi.lic --gurobi_home path/to/installation//gurobi/gurobi1002/linux64 
-```
-
-To train the REDS DS-CNN S models on *CIFAR10* or *Fashion-MNIST* run for the former the *vision_ds_convolution_fashion_mnist.py* file and for the latter *vision_ds_convolution_cifar10.py* file. The pre-trained models are stored in the models folder.
 
 
 ## Analysis results on Pixel 6 and Xiaomi Redmi Note 9 Pro 

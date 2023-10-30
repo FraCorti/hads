@@ -15,11 +15,11 @@ def get_reds_ds_cnn_architecture(model_settings,
                                  subnetworks_number=4, model_filters=64, model_size="l"):
     if model_size == "l":
         return Reds_Ds_Cnn_Wake_Model_L(classes=classes, use_bias=use_bias,
-                                          subnetworks_number=subnetworks_number,
-                                          model_filters=model_filters,
-                                          stride_w_first_convolution=1,
-                                          strides_first_depth_wise=2,
-                                          model_settings=model_settings, debug=debug)
+                                        subnetworks_number=subnetworks_number,
+                                        model_filters=model_filters,
+                                        stride_w_first_convolution=1,
+                                        strides_first_depth_wise=2,
+                                        model_settings=model_settings, debug=debug)
     else:
         if model_size == 'm':
             return Reds_Ds_Cnn_Wake_Model(classes=classes, use_bias=use_bias,
@@ -43,7 +43,7 @@ class Reds_DepthwiseConv2D(tf.keras.layers.Layer):
             kernel_size,
             batch_dimensions=4,
             strides=(1, 1),
-            padding="valid",
+            padding="same",
             depth_multiplier=1,
             data_format=None,
             dilation_rate=(1, 1),
@@ -63,7 +63,7 @@ class Reds_DepthwiseConv2D(tf.keras.layers.Layer):
         self.use_bias = use_bias
         self.kernel_size = kernel_size
         self.dilation_rate = dilation_rate
-        self.padding = padding
+        self.padding = "same" if strides == (1, 1) else "valid"
         self.strides = strides
         self.depth_multiplier = depth_multiplier
         self.depthwise_initializer = initializers.get(depthwise_initializer)
@@ -118,16 +118,16 @@ class Reds_DepthwiseConv2D(tf.keras.layers.Layer):
 
         return np.prod(self.depthwise_kernel[:, :, 0:int(self.filters_splittings[subnetwork_index]),
                        :].shape) + np.prod(
-            self.bias[:int(self.filters_splittings[subnetwork_index])].shape)
+            self.bias[:int(self.filters_splittings[subnetwork_index])].shape) if self.use_bias else 0
 
-    def compute_layer_lookup_table(self, inputs):
+    def compute_layer_lookup_table(self, inputs, filters_dimensions=2):
         """
         Compute the number of MACs for each unit considered inside the layer and the memory bytes required to store it
         @param inputs: the input tensor to the layer
         @return: the lookup table for the layer and the transformed input
         """
 
-        layer_units = self.depthwise_kernel.shape[2]
+        layer_units = self.depthwise_kernel.shape[filters_dimensions]
 
         activation_map = tf.nn.depthwise_conv2d(
             inputs,
@@ -183,7 +183,7 @@ def set_trainable_pointwise_batch_norm(model, trainable_pointwise_batch_norm=Tru
             layer.trainable = trainable_pointwise_batch_norm
 
 
-def get_pointwise_convolutions_layers_weights(model):
+def get_pointwise_convolutions_layers_weights(model, classes=1000):
     pointwise_layers_weights = []
     pointwise_layers_biases = []
     first_layer = True
@@ -194,10 +194,11 @@ def get_pointwise_convolutions_layers_weights(model):
             if first_layer:
                 first_layer = False
                 continue
-            pointwise_layers_weights.append(layer.weights[0])
-            pointwise_layers_biases.append(layer.weights[1])
+            if layer.weights[0].shape[3] != classes:
+                pointwise_layers_weights.append(layer.weights[0])
+            # pointwise_layers_biases.append(layer.weights[1])
 
-    return pointwise_layers_weights, pointwise_layers_biases
+    return pointwise_layers_weights
 
 
 class Reds_Ds_Cnn_Wake_Model_L(tf.keras.Model):
@@ -215,7 +216,7 @@ class Reds_Ds_Cnn_Wake_Model_L(tf.keras.Model):
             (self.model_settings['spectrogram_length'], self.model_settings['dct_coefficient_count'], 1),
             input_shape=(self.model_settings['fingerprint_size'], 1))
 
-        self.standard_convolution = Reds_2DConvolution_Standard(in_features=1, out_features=model_filters,
+        self.standard_convolution = Reds_2DConvolution_Standard(in_channels=1, out_channels=model_filters,
                                                                 kernel_size=(10, 4),
                                                                 batch_dimensions=batch_dimensions,
                                                                 use_bias=use_bias,
@@ -231,7 +232,7 @@ class Reds_Ds_Cnn_Wake_Model_L(tf.keras.Model):
                                                debug=debug, padding='same')
         self.batch_norm2 = Reds_BatchNormalizationBase(fused=False)
         self.relu2 = tf.keras.layers.ReLU()
-        self.pointwise_conv1 = Reds_2DConvolution_Standard(in_features=model_filters, out_features=model_filters,
+        self.pointwise_conv1 = Reds_2DConvolution_Standard(in_channels=model_filters, out_channels=model_filters,
                                                            kernel_size=(1, 1),
                                                            batch_dimensions=batch_dimensions,
                                                            use_bias=use_bias, strides=(1, 1),
@@ -244,7 +245,7 @@ class Reds_Ds_Cnn_Wake_Model_L(tf.keras.Model):
                                                debug=debug, padding='same')
         self.batch_norm4 = Reds_BatchNormalizationBase(fused=False)
         self.relu4 = tf.keras.layers.ReLU()
-        self.pointwise_conv2 = Reds_2DConvolution_Standard(in_features=model_filters, out_features=model_filters,
+        self.pointwise_conv2 = Reds_2DConvolution_Standard(in_channels=model_filters, out_channels=model_filters,
                                                            kernel_size=(1, 1),
                                                            batch_dimensions=batch_dimensions,
                                                            use_bias=use_bias, strides=(1, 1),
@@ -257,7 +258,7 @@ class Reds_Ds_Cnn_Wake_Model_L(tf.keras.Model):
                                                debug=debug, padding='same')
         self.batch_norm6 = Reds_BatchNormalizationBase(fused=False)
         self.relu6 = tf.keras.layers.ReLU()
-        self.pointwise_conv3 = Reds_2DConvolution_Standard(in_features=model_filters, out_features=model_filters,
+        self.pointwise_conv3 = Reds_2DConvolution_Standard(in_channels=model_filters, out_channels=model_filters,
                                                            kernel_size=(1, 1),
                                                            batch_dimensions=batch_dimensions,
                                                            use_bias=use_bias, strides=(1, 1),
@@ -270,7 +271,7 @@ class Reds_Ds_Cnn_Wake_Model_L(tf.keras.Model):
                                                debug=debug, padding='same')
         self.batch_norm8 = Reds_BatchNormalizationBase(fused=False)
         self.relu8 = tf.keras.layers.ReLU()
-        self.pointwise_conv4 = Reds_2DConvolution_Standard(in_features=model_filters, out_features=model_filters,
+        self.pointwise_conv4 = Reds_2DConvolution_Standard(in_channels=model_filters, out_channels=model_filters,
                                                            kernel_size=(1, 1),
                                                            batch_dimensions=batch_dimensions,
                                                            use_bias=use_bias, strides=(1, 1),
@@ -284,7 +285,7 @@ class Reds_Ds_Cnn_Wake_Model_L(tf.keras.Model):
                                                debug=debug, padding='same')
         self.batch_norm10 = Reds_BatchNormalizationBase(fused=False)
         self.relu10 = tf.keras.layers.ReLU()
-        self.pointwise_conv5 = Reds_2DConvolution_Standard(in_features=model_filters, out_features=model_filters,
+        self.pointwise_conv5 = Reds_2DConvolution_Standard(in_channels=model_filters, out_channels=model_filters,
                                                            kernel_size=(1, 1),
                                                            batch_dimensions=batch_dimensions,
                                                            use_bias=use_bias, strides=(1, 1),
@@ -370,8 +371,8 @@ class Reds_Ds_Cnn_Wake_Model_L(tf.keras.Model):
                 subnetworks_filters_first_convolution[subnetwork_index][0] + 1)
 
             # add filters in depthwise and pointwise convolution layers
-            pointwise_filters_subnetwork = subnetworks_filters_pointwise[subnetwork_index]# [0]
-            depthwise_filters_subnetwork = subnetworks_filters_depthwise[subnetwork_index]# [0]
+            pointwise_filters_subnetwork = subnetworks_filters_pointwise[subnetwork_index][0]
+            depthwise_filters_subnetwork = subnetworks_filters_depthwise[subnetwork_index][0]
 
             block_index_depthwise = 0
             for layer in self.layers:
@@ -410,15 +411,11 @@ class Reds_Ds_Cnn_Wake_Model_L(tf.keras.Model):
         @return: List[List] containing the filters forward times for each layer
         List[List] containing the filters macs for each layer
         """
-        inputs = None
-        for images, _ in train_data.take(1):
-            inputs = images
-            break
 
         layers_filters_macs = []
         layers_filters_byte = []
 
-        inputs = self.reshape(inputs)
+        inputs = tf.ones((1, 49, 10, 1), dtype=tf.dtypes.float32)
 
         for layer in self.layers:
 
@@ -448,7 +445,7 @@ class Reds_Ds_Cnn_Wake_Model_L(tf.keras.Model):
             if isinstance(layer, Reds_BatchNormalizationBase):
                 _ = layer.build(init_input[0].shape)
             elif isinstance(layer, Reds_2DConvolution_Standard):
-                init_input, times = layer(init_input)
+                init_input = layer(init_input)
             elif isinstance(layer, Reds_DepthwiseConv2D):
                 init_input = layer(init_input)
             elif isinstance(layer, Linear_Adaptive):
@@ -460,79 +457,51 @@ class Reds_Ds_Cnn_Wake_Model_L(tf.keras.Model):
 
     def call(self, inputs, training=None, mask=None):
         inputs = self.reshape(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Initial Input shape after Reshape") if self.debug else None
 
         # copy the input once for each subnetwork
         inputs = [inputs for _ in range(self.subnetworks_number)]
 
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Initial Inputs shape") if self.debug else None
-
-        inputs, times = self.standard_convolution(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Initial Standard Convolution") if self.debug else None
-
+        inputs = self.standard_convolution(inputs)
         inputs = self.batch_norm1(inputs)
         inputs = [self.relu1(input) for input in inputs]
 
         inputs = self.depthwise1(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Depthwise Convolution Layer 1") if self.debug else None
         inputs = self.batch_norm2(inputs)
         inputs = [self.relu2(input) for input in inputs]
 
-        inputs, times = self.pointwise_conv1(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Pointwise Convolution Layer 1") if self.debug else None
+        inputs = self.pointwise_conv1(inputs)
         inputs = self.batch_norm3(inputs)
         inputs = [self.relu3(input) for input in inputs]
 
         inputs = self.depthwise2(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Depthwise Convolution Layer 2") if self.debug else None
         inputs = self.batch_norm4(inputs)
         inputs = [self.relu4(input) for input in inputs]
 
-        inputs, times = self.pointwise_conv2(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Pointwise Convolution Layer 2") if self.debug else None
+        inputs = self.pointwise_conv2(inputs)
         inputs = self.batch_norm5(inputs)
         inputs = [self.relu5(input) for input in inputs]
 
         inputs = self.depthwise3(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Depthwise Convolution Layer 3") if self.debug else None
         inputs = self.batch_norm6(inputs)
         inputs = [self.relu6(input) for input in inputs]
 
-        inputs, times = self.pointwise_conv3(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Pointwise Convolution Layer 3") if self.debug else None
+        inputs = self.pointwise_conv3(inputs)
         inputs = self.batch_norm7(inputs)
         inputs = [self.relu7(input) for input in inputs]
 
         inputs = self.depthwise4(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Depthwise Convolution Layer 4") if self.debug else None
         inputs = self.batch_norm8(inputs)
         inputs = [self.relu8(input) for input in inputs]
 
-        inputs, times = self.pointwise_conv4(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Pointwise Convolution Layer 4") if self.debug else None
+        inputs = self.pointwise_conv4(inputs)
         inputs = self.batch_norm9(inputs)
         inputs = [self.relu9(input) for input in inputs]
 
         inputs = self.depthwise5(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Depthwise Convolution Layer 5") if self.debug else None
         inputs = self.batch_norm10(inputs)
         inputs = [self.relu10(input) for input in inputs]
 
-        inputs, times = self.pointwise_conv5(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Pointwise Convolution Layer 5") if self.debug else None
+        inputs = self.pointwise_conv5(inputs)
         inputs = self.batch_norm11(inputs)
         inputs = [self.relu11(input) for input in inputs]
 
@@ -541,12 +510,7 @@ class Reds_Ds_Cnn_Wake_Model_L(tf.keras.Model):
             for input in inputs]
 
         inputs = [tf.keras.layers.Flatten()(input) for input in inputs]
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="AFTER Flatten") if self.debug else None
-        inputs, times = self.fc1(inputs)
-
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="LAST output vector") if self.debug else None
+        inputs = self.fc1(inputs)
 
         return inputs
 
@@ -566,7 +530,7 @@ class Reds_Ds_Cnn_Wake_Model(tf.keras.Model):
         self.reshape = tf.keras.layers.Reshape(
             (self.model_settings['spectrogram_length'], self.model_settings['dct_coefficient_count'], 1),
             input_shape=(self.model_settings['fingerprint_size'], 1))
-        self.standard_convolution = Reds_2DConvolution_Standard(in_features=1, out_features=model_filters,
+        self.standard_convolution = Reds_2DConvolution_Standard(in_channels=1, out_channels=model_filters,
                                                                 kernel_size=(10, 4),
                                                                 batch_dimensions=batch_dimensions,
                                                                 use_bias=use_bias,
@@ -582,7 +546,7 @@ class Reds_Ds_Cnn_Wake_Model(tf.keras.Model):
                                                debug=debug, padding='same')
         self.batch_norm2 = Reds_BatchNormalizationBase(fused=False)
         self.relu2 = tf.keras.layers.ReLU()
-        self.pointwise_conv1 = Reds_2DConvolution_Standard(in_features=model_filters, out_features=model_filters,
+        self.pointwise_conv1 = Reds_2DConvolution_Standard(in_channels=model_filters, out_channels=model_filters,
                                                            kernel_size=(1, 1),
                                                            batch_dimensions=batch_dimensions,
                                                            use_bias=use_bias, strides=(1, 1),
@@ -595,7 +559,7 @@ class Reds_Ds_Cnn_Wake_Model(tf.keras.Model):
                                                debug=debug, padding='same')
         self.batch_norm4 = Reds_BatchNormalizationBase(fused=False)
         self.relu4 = tf.keras.layers.ReLU()
-        self.pointwise_conv2 = Reds_2DConvolution_Standard(in_features=model_filters, out_features=model_filters,
+        self.pointwise_conv2 = Reds_2DConvolution_Standard(in_channels=model_filters, out_channels=model_filters,
                                                            kernel_size=(1, 1),
                                                            batch_dimensions=batch_dimensions,
                                                            use_bias=use_bias, strides=(1, 1),
@@ -608,7 +572,7 @@ class Reds_Ds_Cnn_Wake_Model(tf.keras.Model):
                                                debug=debug, padding='same')
         self.batch_norm6 = Reds_BatchNormalizationBase(fused=False)
         self.relu6 = tf.keras.layers.ReLU()
-        self.pointwise_conv3 = Reds_2DConvolution_Standard(in_features=model_filters, out_features=model_filters,
+        self.pointwise_conv3 = Reds_2DConvolution_Standard(in_channels=model_filters, out_channels=model_filters,
                                                            kernel_size=(1, 1),
                                                            batch_dimensions=batch_dimensions,
                                                            use_bias=use_bias, strides=(1, 1),
@@ -621,7 +585,7 @@ class Reds_Ds_Cnn_Wake_Model(tf.keras.Model):
                                                debug=debug, padding='same')
         self.batch_norm8 = Reds_BatchNormalizationBase(fused=False)
         self.relu8 = tf.keras.layers.ReLU()
-        self.pointwise_conv4 = Reds_2DConvolution_Standard(in_features=model_filters, out_features=model_filters,
+        self.pointwise_conv4 = Reds_2DConvolution_Standard(in_channels=model_filters, out_channels=model_filters,
                                                            kernel_size=(1, 1),
                                                            batch_dimensions=batch_dimensions,
                                                            use_bias=use_bias, strides=(1, 1),
@@ -706,8 +670,8 @@ class Reds_Ds_Cnn_Wake_Model(tf.keras.Model):
                 subnetworks_filters_first_convolution[subnetwork_index][0] + 1)
 
             # add filters in depthwise and pointwise convolution layers
-            pointwise_filters_subnetwork = subnetworks_filters_pointwise[subnetwork_index] #[0]
-            depthwise_filters_subnetwork = subnetworks_filters_depthwise[subnetwork_index] # [0]
+            pointwise_filters_subnetwork = subnetworks_filters_pointwise[subnetwork_index][0]
+            depthwise_filters_subnetwork = subnetworks_filters_depthwise[subnetwork_index][0]
 
             block_index_depthwise = 0
             for layer in self.layers:
@@ -746,15 +710,16 @@ class Reds_Ds_Cnn_Wake_Model(tf.keras.Model):
         @return: List[List] containing the filters forward times for each layer
         List[List] containing the filters macs for each layer
         """
-        inputs = None
-        for images, _ in train_data.take(1):
-            inputs = images
-            break
+        # inputs = None
+        # for images, _ in train_data.take(1):
+        #    inputs = images
+        #    break
 
         layers_filters_macs = []
         layers_filters_byte = []
 
-        inputs = self.reshape(inputs)
+        # Create a dummy input 1x49x10x1 for the model to compute the lookup table
+        inputs = tf.ones((1, 49, 10, 1), dtype=tf.dtypes.float32)
 
         for layer in self.layers:
 
@@ -784,7 +749,7 @@ class Reds_Ds_Cnn_Wake_Model(tf.keras.Model):
             if isinstance(layer, Reds_BatchNormalizationBase):
                 _ = layer.build(init_input[0].shape)
             elif isinstance(layer, Reds_2DConvolution_Standard):
-                init_input, times = layer(init_input)
+                init_input = layer(init_input)
             elif isinstance(layer, Reds_DepthwiseConv2D):
                 init_input = layer(init_input)
             elif isinstance(layer, Linear_Adaptive):
@@ -796,67 +761,44 @@ class Reds_Ds_Cnn_Wake_Model(tf.keras.Model):
 
     def call(self, inputs, training=None, mask=None):
         inputs = self.reshape(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Initial Input shape after Reshape") if self.debug else None
 
         # copy the input once for each subnetwork
         inputs = [inputs for _ in range(self.subnetworks_number)]
 
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Initial Inputs shape") if self.debug else None
-
-        inputs, times = self.standard_convolution(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Initial Standard Convolution") if self.debug else None
+        inputs = self.standard_convolution(inputs)
 
         inputs = self.batch_norm1(inputs)
         inputs = [self.relu1(input) for input in inputs]
 
         inputs = self.depthwise1(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Depthwise Convolution Layer 1") if self.debug else None
         inputs = self.batch_norm2(inputs)
         inputs = [self.relu2(input) for input in inputs]
 
-        inputs, times = self.pointwise_conv1(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Pointwise Convolution Layer 1") if self.debug else None
+        inputs = self.pointwise_conv1(inputs)
         inputs = self.batch_norm3(inputs)
         inputs = [self.relu3(input) for input in inputs]
 
         inputs = self.depthwise2(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Depthwise Convolution Layer 2") if self.debug else None
         inputs = self.batch_norm4(inputs)
         inputs = [self.relu4(input) for input in inputs]
 
-        inputs, times = self.pointwise_conv2(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Pointwise Convolution Layer 2") if self.debug else None
+        inputs = self.pointwise_conv2(inputs)
         inputs = self.batch_norm5(inputs)
         inputs = [self.relu5(input) for input in inputs]
 
         inputs = self.depthwise3(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Depthwise Convolution Layer 3") if self.debug else None
         inputs = self.batch_norm6(inputs)
         inputs = [self.relu6(input) for input in inputs]
 
-        inputs, times = self.pointwise_conv3(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Pointwise Convolution Layer 3") if self.debug else None
+        inputs = self.pointwise_conv3(inputs)
         inputs = self.batch_norm7(inputs)
         inputs = [self.relu7(input) for input in inputs]
 
         inputs = self.depthwise4(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Depthwise Convolution Layer 4") if self.debug else None
         inputs = self.batch_norm8(inputs)
         inputs = [self.relu8(input) for input in inputs]
 
-        inputs, times = self.pointwise_conv4(inputs)
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="Pointwise Convolution Layer 4") if self.debug else None
+        inputs = self.pointwise_conv4(inputs)
         inputs = self.batch_norm9(inputs)
         inputs = [self.relu9(input) for input in inputs]
 
@@ -865,12 +807,7 @@ class Reds_Ds_Cnn_Wake_Model(tf.keras.Model):
             for input in inputs]
 
         inputs = [tf.keras.layers.Flatten()(input) for input in inputs]
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="AFTER Flatten") if self.debug else None
-        inputs, times = self.fc1(inputs)
-
-        print_intermediate_activations(inputs=inputs, print_hidden_feature=self.print_hidden_feature,
-                                       message="LAST output vector") if self.debug else None
+        inputs = self.fc1(inputs)
 
         return inputs
 

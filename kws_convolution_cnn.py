@@ -10,12 +10,11 @@ from utils.forward import convert_cnn_model_to_reds, cross_entropy_loss, accurac
     classification_head_finetuning
 from utils.importance_score import compute_filters_importance_score_cnn, \
     compute_descending_filters_score_indexes_cnn, permute_filters_cnn, assign_pretrained_convolutional_filters, \
-    compute_accumulated_gradients, permute_batch_normalization_layers
+    compute_accumulated_gradients_mobilenetv1, permute_batch_normalization_layers, compute_accumulated_gradients_ds_cnn
 from utils.keyword_spotting import load_pre_trained_kws_model, compute_accuracy_test
 from utils.keyword_spotting_data import get_audio_data
-from utils.knapsack import knapsack_find_splits_cnn, initialize_nested_knapsack_solver
+from utils.knapsack import knapsack_find_splits_cnn, initialize_nested_knapsack_solver_cnn
 from utils.logs import setup_logging, log_print
-from utils.serialize import serialize_reds_model
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -23,16 +22,17 @@ if __name__ == '__main__':
     parser.add_argument('--gurobi_home',
                         type=str,
                         default="",
+                      
                         help="""\
-                Gurobi Linux absolute path. Example: */gurobi/gurobi1002/linux64
-                """)
+                    Gurobi Linux absolute path.
+                    """)
 
     parser.add_argument('--gurobi_license_file',
                         type=str,
-                        default="",
+                        default="", 
                         help="""\
-                    Gurobi license absolute path. Example:  */gurobi.lic 
-                    """)
+                        Gurobi license absolute path.
+                        """)
     parser.add_argument(
         '--data_url',
         type=str,
@@ -43,43 +43,43 @@ if __name__ == '__main__':
         type=str,
         default='{}/datasets/speech_dataset/'.format(os.getcwd()),
         help="""\
-            Where to download the speech training data to.
-            """)
+               Where to download the speech training data to.
+               """)
     parser.add_argument(
         '--background_volume',
         type=float,
         default=0.1,
         help="""\
-            How loud the background noise should be, between 0 and 1.
-            """)
+               How loud the background noise should be, between 0 and 1.
+               """)
     parser.add_argument(
         '--background_frequency',
         type=float,
         default=0.8,
         help="""\
-            How many of the training samples have background noise mixed in.
-            """)
+               How many of the training samples have background noise mixed in.
+               """)
     parser.add_argument(
         '--silence_percentage',
         type=float,
         default=10.0,
         help="""\
-            How much of the training data should be silence.
-            """)
+               How much of the training data should be silence.
+               """)
     parser.add_argument(
         '--unknown_percentage',
         type=float,
         default=10.0,
         help="""\
-            How much of the training data should be unknown words.
-            """)
+               How much of the training data should be unknown words.
+               """)
     parser.add_argument(
         '--time_shift_ms',
         type=float,
         default=100.0,
         help="""\
-            Range to randomly shift the training audio by in time.
-            """)
+               Range to randomly shift the training audio by in time.
+               """)
     parser.add_argument(
         '--testing_percentage',
         type=int,
@@ -164,7 +164,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--cuda_device', default=12, type=int)
     parser.add_argument('--epochs', type=int, default=75, help='training epochs')
-    parser.add_argument('--model_sizes', default='l', type=str,
+    parser.add_argument('--model_sizes', default='s,l', type=str,
                         help='model sizes')
     parser.add_argument('--seed', default=0, type=int)
     parser.add_argument('--experimental_runs', default=5, type=int)
@@ -181,16 +181,29 @@ if __name__ == '__main__':
     parser.add_argument('--save_path', default='{}/result/{}/KWS_Knapsack_alpha_{}_{}epochs_{}batch_{}subnetworks_{}',
                         type=str)
 
+    parser.add_argument(
+        '--constraints_percentages',
+        type=str,
+        default='0.25,0.5,0.75',
+        help='Constraints percentages', )
+
     args, _ = parser.parse_known_args()
     setup_logging(args=args,
                   experiment_name="KWS_ARM_{}_importance_finetuning".format(args.architecture_name))
 
-    setup_deterministic_computation(seed=args.seed)
+    #setup_deterministic_computation(seed=args.seed)
     gpu_selection(gpu_number=args.cuda_device)
+
+    os.environ[
+        'GUROBI_HOME'] = args.gurobi_home
+    os.environ['GRB_LICENSE_FILE'] = args.gurobi_license_file
+
+    constraints_percentages = list(map(float, args.constraints_percentages.split(',')))
 
     for model_size in args.model_sizes.split(','):
 
-        log_print("Loading model {} size {} minibatch number {} ".format('dnn', model_size, args.minibatch_number))
+        log_print("Loading model {} size {} minibatch number {} ".format(args.architecture_name, model_size,
+                                                                         args.minibatch_number))
 
         average_final_subnetworks_accuracy, average_final_subnetworks_loss = [[] for _ in
                                                                               range(args.subnets_number)], [[] for _
@@ -223,9 +236,9 @@ if __name__ == '__main__':
             pretrained_model_accuracy.append(pretrained_model_test_accuracy)
 
             loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-            gradients_accumulation = compute_accumulated_gradients(model=pretrained_model, train_data=train_data,
-                                                                   loss_fn=loss_fn,
-                                                                   args=args)
+            gradients_accumulation = compute_accumulated_gradients_ds_cnn(model=pretrained_model, train_data=train_data,
+                                                                          loss_fn=loss_fn,
+                                                                          args=args)
 
             importance_score_filters = compute_filters_importance_score_cnn(model=pretrained_model,
                                                                             gradients_accumulation=gradients_accumulation)
@@ -261,16 +274,18 @@ if __name__ == '__main__':
                                                               model_settings=model_settings,
                                                               trainable_parameters=True,
                                                               trainable_batch_normalization=False,
-                                                              training_from_scratch=True,
+                                                              training_from_scratch=False,
                                                               model_size_info_convolution=model_size_info_convolution,
                                                               model_size_info_dense=model_size_info_dense)
 
             layers_filters_macs, layers_filters_byte = reds_pretrained_model.compute_lookup_table(
                 train_data=train_data)
 
-            importance_list, macs_list, memory_list, macs_targets, memory_targets = initialize_nested_knapsack_solver(
+            importance_list, macs_list, memory_list, macs_targets, memory_targets = initialize_nested_knapsack_solver_cnn(
                 layers_filters_macs=layers_filters_macs, layers_filters_byte=layers_filters_byte,
-                descending_importance_score_scores=descending_importance_score_scores)
+                subnetworks_number=args.subnets_number,
+                descending_importance_score_scores=descending_importance_score_scores,
+                constraints_percentages=constraints_percentages)
 
             subnetworks_filters_indexes, subnetworks_macs = knapsack_find_splits_cnn(args=args,
                                                                                      layers_filter_macs=layers_filters_macs,
@@ -326,26 +341,6 @@ if __name__ == '__main__':
                 100 * final_subnetworks_accuracy[subnetwork_number][0])
                 for subnetwork_number in range(args.subnets_number)]
 
-            reconverted_model = reds_pretrained_model.get_model()
-            reconverted_model.trainable = False
-
-            serialize_reds_model(model_to_serialize=reconverted_model, path=args.save_path.format(os.getcwd(), 'models',
-                                                                                                  args.architecture_name + f"_{model_size}",
-                                                                                                  args.epochs,
-                                                                                                  args.batch_size,
-                                                                                                  args.subnets_number,
-                                                                                                  args.experimental_runs),
-                                 reds_model=reds_pretrained_model)
-
-            reds_pretrained_model = convert_cnn_model_to_reds(pretrained_model=pretrained_model, train_ds=train_data,
-                                                              args=args,
-                                                              model_settings=model_settings,
-                                                              trainable_parameters=True,
-                                                              trainable_batch_normalization=False,
-                                                              model_size_info_convolution=model_size_info_convolution,
-                                                              model_size_info_dense=model_size_info_dense)
-
-            reds_pretrained_model.set_subnetwork_indexes(subnetworks_filters_indexes=subnetworks_filters_indexes)
 
         for subnetwork_number in range(args.subnets_number):
             log_print(
@@ -353,3 +348,4 @@ if __name__ == '__main__':
 
         log_print(
             f"pretrained model average test accuracy: {np.array(pretrained_model_accuracy).mean():.3f}% std: {np.array(pretrained_model_accuracy).std():.3f}")
+

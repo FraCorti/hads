@@ -6,16 +6,13 @@ from keras import backend
 from keras import constraints
 from keras import initializers
 from keras import regularizers
-from keras.dtensor import utils
-from keras.engine.base_layer import Layer
-from keras.engine.input_spec import InputSpec
-from keras.utils import control_flow_util
+from tensorflow.python.keras.engine.input_spec import InputSpec
+from tensorflow.python.keras.utils import control_flow_util
 from keras.utils import tf_utils
 
 from tensorflow.python.ops.control_flow_ops import (
     get_enclosing_xla_context,
 )
-
 
 class Reds_BatchNormalizationBase(tf.keras.layers.Layer):
     r"""Layer that normalizes its inputs.
@@ -386,7 +383,7 @@ class Reds_BatchNormalizationBase(tf.keras.layers.Layer):
                     f"with shape {tuple(input_shape)} "
                     f"and axis={tuple(self.axis)}"
                 )
-        self.input_spec = InputSpec(ndim=rank, axes=axis_to_dim)
+        # self.input_spec = InputSpec(ndim=rank, axes=axis_to_dim)
 
         if len(axis_to_dim) == 1 and self.virtual_batch_size is None:
             # Single axis batch norm (most common/default use-case)
@@ -471,7 +468,7 @@ class Reds_BatchNormalizationBase(tf.keras.layers.Layer):
                     )
 
                 with tf.distribute.get_strategy().extended.colocate_vars_with(
-                        self.moving_variance
+                    self.moving_variance
                 ):
                     self.moving_stddev = self.add_weight(
                         name="moving_stddev",
@@ -507,13 +504,13 @@ class Reds_BatchNormalizationBase(tf.keras.layers.Layer):
                     return var
 
                 with tf.distribute.get_strategy().extended.colocate_vars_with(
-                        self.moving_mean
+                    self.moving_mean
                 ):
                     self.renorm_mean = _renorm_variable(
                         "renorm_mean", param_shape, self.moving_mean_initializer
                     )
                 with tf.distribute.get_strategy().extended.colocate_vars_with(
-                        self.moving_stddev
+                    self.moving_stddev
                 ):
                     self.renorm_stddev = _renorm_variable(
                         "renorm_stddev", param_shape, moving_stddev_initializer
@@ -802,6 +799,11 @@ class Reds_BatchNormalizationBase(tf.keras.layers.Layer):
         return training
 
     def call(self, inputs, *args, **kwargs):
+        if self.built is False:
+            shape = inputs[0].shape
+            shape[0] = None
+            self.build(input_shape=shape)
+
         inputs = [tf.cast(input, self.compute_dtype) for input in inputs]
 
         training = self._get_training_value()

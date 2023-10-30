@@ -16,22 +16,22 @@ from utils.keyword_spotting_data import get_audio_data
 from utils.knapsack import knapsack_find_splits_dnn, initialize_nested_knapsack_solver_dnn
 from utils.logs import setup_logging, log_print
 
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--gurobi_home',
                         type=str,
                         default="",
+                   
                         help="""\
-                Gurobi Linux absolute path. Example: */gurobi/gurobi1002/linux64
+                Gurobi Linux absolute path.
                 """)
 
     parser.add_argument('--gurobi_license_file',
                         type=str,
-                        default="",
+                        default="",  
                         help="""\
-                    Gurobi license absolute path. Example:  */gurobi.lic 
+                    Gurobi license absolute path.
                     """)
 
     parser.add_argument(
@@ -178,6 +178,11 @@ if __name__ == '__main__':
     parser.add_argument('--minibatch_number', default=100, type=int)
     parser.add_argument('--save_path', default='{}/result/{}/KWS_Knapsack_alpha_{}_{}epochs_{}batch_{}subnetworks_{}',
                         type=str)
+    parser.add_argument(
+        '--constraints_percentages',
+        type=str,
+        default='0.25,0.5,0.75',
+        help='Constraints percentages', )
 
     args, _ = parser.parse_known_args()
     setup_logging(args=args,
@@ -199,6 +204,8 @@ if __name__ == '__main__':
         'm': 256,
         'l': 436
     }
+
+    constraints_percentages = list(map(float, args.constraints_percentages.split(',')))
 
     for model_size in args.model_sizes.split(','):
 
@@ -265,7 +272,9 @@ if __name__ == '__main__':
 
             importance_list, macs_list, memory_list, macs_targets, memory_targets = initialize_nested_knapsack_solver_dnn(
                 layers_filters_macs=layers_filters_macs, layers_filters_byte=layers_filters_byte,
-                descending_importance_score_scores=descending_importance_score_scores)
+                subnetworks_number=args.subnets_number,
+                descending_importance_score_scores=descending_importance_score_scores,
+                constraints_percentages=constraints_percentages)
 
             subnetworks_neurons_indexes, subnetworks_macs = knapsack_find_splits_dnn(args=args,
                                                                                      layers_filter_macs=layers_filters_macs,
@@ -273,7 +282,8 @@ if __name__ == '__main__':
                                                                                      macs_targets=macs_targets,
                                                                                      macs_list=macs_list,
                                                                                      memory_list=memory_list,
-                                                                                     memory_targets=memory_targets, bottom_up=True)
+                                                                                     memory_targets=memory_targets,
+                                                                                     bottom_up=True)
 
             if subnetworks_macs_print is None:
                 subnetworks_macs_print = subnetworks_macs
@@ -304,7 +314,6 @@ if __name__ == '__main__':
                 100 * final_subnetworks_accuracy[subnetwork_number][0])
                 for subnetwork_number in range(args.subnets_number)]
 
-
             reds_pretrained_model = convert_dnn_model_to_reds(pretrained_model=pretrained_model, train_ds=train_data,
                                                               args=args,
                                                               model_settings=model_settings,
@@ -319,3 +328,4 @@ if __name__ == '__main__':
 
         log_print(
             f"pretrained model average test accuracy: {np.array(pretrained_model_accuracy).mean():.3f}% std: {np.array(pretrained_model_accuracy).std():.3f}")
+
