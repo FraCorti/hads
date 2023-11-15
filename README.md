@@ -1,5 +1,7 @@
 # REDS: Resource-Efficient Deep Subnetworks for Dynamic Resource Constraints
 
+In this work we introduce Resource-Efficient Deep Subnetworks (REDS) to tackle model adaptation to variable resources. In contrast to the state-of-the-art, REDS use structured sparsity constructively by exploiting permutation invariance of neurons, which allows for hardware-specific optimizations. Specifically, REDS achieve computational efficiency by (1) skipping sequential computational blocks identified by a novel iterative knapsack optimizer, and (2) leveraging simple math to re-arrange the order of operations in REDS computational graph to take advantage of the data cache. REDS support conventional deep networks frequently deployed on the edge and provide computational benefits even for small and simple networks. We evaluate REDS on six benchmark architectures trained on the [Google Speech Commands](https://arxiv.org/pdf/1804.03209.pdf), [Fashion-MNIST](https://github.com/zalandoresearch/fashion-mnist) and [CIFAR10](https://www.cs.toronto.edu/~kriz/cifar.html) datasets, and test on four off-the-shelf mobile and embedded hardware platforms. We provide a theoretical result and empirical evidence for REDS outstanding performance in terms of submodels' test set accuracy, and demonstrate an adaptation time in response to dynamic resource constraints of under 40 microseconds of models deployed on [Arduino Nano 33 BLE Sense](https://docs.arduino.cc/hardware/nano-33-ble-sense) through [Tensorflow Lite for Microcontrollers](https://github.com/tensorflow/tflite-micro). 
+
 ## Software prerequisites
 
 Install the software packages required for reproducing the experiment by running the
@@ -18,13 +20,13 @@ latter to its license.
 python kws_ds_convolution.py --gurobi_license_file path/to/license/gurobi.lic --gurobi_home path/to/installation//gurobi/gurobi1002/linux64 
 ```
 
-Change linux64 with your operating system version.
+Change linux64 with your operating system version/type.
 
 ## Training REDS models
 
 For each program, you can specify the usage of the GPU by passing an id number from the  `--cuda_device` argument. In the default configuration, all the experiments results are stored inside the /logs directory and printed to the screen.
 For each program, you can specify the solver's maximum running time per iteration by passing the value in seconds to the
-`--solver_time_limit` argument. For the DS-CNN size L, the suggested time is at least 3 hours (10800
+`--solver_time_limit` argument. For the [DS-CNN size L](https://arxiv.org/pdf/1711.07128.pdf), the suggested time is at least 3 hours (10800
 seconds).
 
 All the individual subnetwork architectures can be trained in isolation by running the `_full_training.py` files. 
@@ -35,7 +37,7 @@ All the individual subnetwork architectures can be trained in isolation by runni
 python kws_ds_convolution.py --gurobi_license_file path/to/license/gurobi.lic --gurobi_home path/to/installation//gurobi/gurobi1002/linux64 
 ```
 
-To train the REDS DS-CNN S models on *CIFAR10* or *Fashion-MNIST* run for the former the *vision_ds_convolution_fashion_mnist.py* file and for the latter *vision_ds_convolution_cifar10.py* file. The pre-trained models are stored in the models folder.
+To train the REDS DS-CNN S models on *CIFAR10* or *Fashion-MNIST* run for the former the *vision_ds_convolution_fashion_mnist.py* file and for the latter *vision_ds_convolution_cifar10.py* file. The pre-trained models are stored in the models/ folder.
 
 **Train DNN models**
 
