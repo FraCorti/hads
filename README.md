@@ -64,3 +64,7 @@ as a function of MAC percentage in each REDS subnetwork.
 **(2) Models size L**
 
 <img src="result/plots/plotly_mobile_parameters_sizeL.png" width="270"/> <img src="result/plots/plotly_mobile_accuracy_sizeL.png" width="270"/> <img src="result/plots/plotly_mobile_inference_sizeL.png" width="270"/>
+
+
+## TensorFlow Lite for Microcontrollers Analysis 
+REDS zero-overhead was assessed on Tensorflow Lite for Microcontrollers by [implementing](https://github.com/aschesklave/TFlite-Micro-Cutting/blob/main/src/model_modifier.cpp) the runtime dynamic adaptation of the deployed model and by [modifying](https://github.com/chint95/tflite-micro/blob/b6878ecd464fcf442ee03a4e279257b20bcda731/src/tensorflow/lite/kernels/internal/reference/fully_connected.h#L31) the fully connected floating point kernel. 
