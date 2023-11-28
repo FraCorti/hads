@@ -68,3 +68,18 @@ as a function of MAC percentage in each REDS subnetwork.
 
 ## TensorFlow Lite for Microcontrollers Analysis 
 REDS zero-overhead was assessed on Tensorflow Lite for Microcontrollers by [implementing](https://github.com/aschesklave/TFlite-Micro-Cutting/blob/main/src/model_modifier.cpp) the runtime dynamic adaptation of the deployed model and by [modifying](https://github.com/chint95/tflite-micro/blob/b6878ecd464fcf442ee03a4e279257b20bcda731/src/tensorflow/lite/kernels/internal/reference/fully_connected.h#L31) the fully connected floating point kernel. 
+
+## Knapsack for depth-wise convolutions
+REDS's iterative knapsack for depth-wise convolutions is modelled with [OR-Tools](https://developers.google.com/optimization) and its implementation can be found [here](https://github.com/FraCorti/REDS/blob/b47f9d5e370e5a7b5a726e832d00030ea401ee00/utils/knapsack.py#L475).  
+
+## BibTeX
+
+If you found this repository useful, please consider citing our work.
+```
+@article{corti2023reds,
+  title={REDS: Resource-Efficient Deep Subnetworks for Dynamic Resource Constraints},
+  author={Corti, Francesco and Maag, Balz and Schauer, Joachim and Pferschy, Ulrich and Saukh, Olga},
+  journal={arXiv preprint arXiv:2311.13349},
+  year={2023}
+}
+```
